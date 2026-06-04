@@ -1,56 +1,65 @@
 {
-  "title": "Italy Supermarket Deals Scraper",
+  "title": "Italian Supermarket Flyers & Deals Scraper",
+  "description": "Extract current promotional products from Italian supermarket flyers. Structured products are available for supported chains; fallback results are explicitly marked.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "catena": {
-      "title": "Catena supermercato",
+      "title": "Supermarket chain",
       "type": "string",
-      "description": "Seleziona la catena. 'tutti' per tutte le catene supportate.",
+      "description": "Select one chain, or all currently monitored chains.",
       "editor": "select",
       "enum": [
         "tutti",
         "lidl",
         "eurospin",
-        "conad",
-        "penny",
         "md",
         "aldi",
+        "esselunga",
+        "conad",
+        "penny",
         "coop",
         "carrefour"
       ],
       "enumTitles": [
-        "Tutte",
+        "All monitored chains",
         "Lidl",
         "Eurospin",
-        "Conad",
-        "Penny Market",
         "MD Discount",
         "Aldi",
-        "Coop",
-        "Carrefour"
+        "Esselunga (fallback availability may vary)",
+        "Conad (coverage under development)",
+        "Penny Market (coverage under development)",
+        "Coop (coverage under development)",
+        "Carrefour (coverage under development)"
       ],
-      "default": "lidl"
+      "default": "tutti"
     },
     "categoria": {
-      "title": "Categoria / parola chiave (opzionale)",
+      "title": "Product search / category filter (optional)",
       "type": "string",
-      "description": "Filtra per categoria o parola chiave (es. 'pasta', 'carne', 'bevande')",
+      "description": "Return only records whose product name or category contains this term, for example: pasta, birra, acqua.",
       "editor": "textfield",
       "default": ""
     },
     "maxItems": {
-      "title": "Max offerte",
+      "title": "Maximum number of products",
       "type": "integer",
-      "description": "Numero massimo di offerte da restituire",
-      "default": 200,
+      "description": "Maximum output records. The Actor returns fewer records when fewer current structured offers are available.",
+      "default": 1000,
       "minimum": 1,
-      "maximum": 5000
+      "maximum": 10000
+    },
+    "diagnosticMode": {
+      "title": "Save API diagnostics",
+      "type": "boolean",
+      "description": "Stores technical API response diagnostics in the key-value store. Use for development only.",
+      "default": false
     },
     "proxyConfig": {
       "title": "Proxy configuration",
       "type": "object",
-      "description": "Configurazione proxy Apify",
+      "description": "Optional Apify Proxy configuration.",
       "editor": "proxy",
       "default": {
         "useApifyProxy": true
