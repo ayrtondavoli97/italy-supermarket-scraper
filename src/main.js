@@ -116,9 +116,16 @@ async function scrapeAllFlyers(page, chain, chainName, limit, log, diagnostics) 
         }).catch(() => ({ flyerId: '', validity: '' }));
         log.info(`${chainName}: open flyer index=${index}, flyerId=${info.flyerId}, validity=${info.validity}`);
         await cover.click({ force: true });
-        const dialog = page.locator('[role="dialog"]').last();
-        if (!(await dialog.isVisible({ timeout: 8000 }).catch(() => false))) {
+        await page.waitForTimeout(500);
+        const closeButton = page.locator('button[aria-label="Chiudi visualizzatore"]').filter({ visible: true }).last();
+        if (!(await closeButton.isVisible({ timeout: 8000 }).catch(() => false))) {
             log.warning(`${chainName}: viewer not opened for flyer index=${index}`);
+            continue;
+        }
+        const dialog = closeButton.locator('xpath=ancestor::*[@role="dialog"][1]');
+        if (!(await dialog.isVisible({ timeout: 3000 }).catch(() => false))) {
+            log.warning(`${chainName}: viewer dialog ancestor not found for flyer index=${index}`);
+            await closeButton.click({ force: true }).catch(() => {});
             continue;
         }
         const pages = await getTotalPages(dialog);
@@ -132,16 +139,11 @@ async function scrapeAllFlyers(page, chain, chainName, limit, log, diagnostics) 
             if (number === pages) break;
             const next = dialog.locator('button[aria-label="Pagina successiva"]:not([disabled])').first();
             if (!(await next.isVisible({ timeout: 2000 }).catch(() => false))) break;
-            const currentText = await dialog.locator('text=/Pagina\\s+\\d+\\s*\\/\\s*\\d+/').first().innerText().catch(() => '');
             await next.click({ force: true });
-            await page.waitForFunction((oldText) => {
-                const badge = [...document.querySelectorAll('[role="dialog"] span')].find((element) => /Pagina\s+\d+\s*\/\s*\d+/i.test(element.textContent || ''));
-                return badge && badge.textContent !== oldText;
-            }, currentText, { timeout: 5000 }).catch(() => page.waitForTimeout(500));
+            await page.waitForTimeout(700);
         }
-        await dialog.locator('button[aria-label="Chiudi visualizzatore"]').click({ force: true }).catch(() => page.keyboard.press('Escape').catch(() => {}));
-        await dialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
-        await page.waitForTimeout(300);
+        await closeButton.click({ force: true }).catch(() => page.keyboard.press('Escape').catch(() => {}));
+        await page.waitForTimeout(500);
     }
     return mergeUniqueOffers(result);
 }
