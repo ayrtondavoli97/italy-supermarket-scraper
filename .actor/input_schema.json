@@ -1,38 +1,60 @@
 {
-    "title": "Italy Supermarket Deals Scraper",
-    "type": "object",
-    "schemaVersion": 1,
-    "properties": {
-        "catena": {
-            "title": "Catena supermercato",
-            "type": "string",
-            "description": "Seleziona la catena. 'tutti' per tutte le catene supportate.",
-            "editor": "select",
-            "enum": ["tutti", "lidl", "eurospin", "penny", "md"],
-            "enumTitles": ["Tutte (Lidl + Eurospin + Penny + MD)", "Lidl", "Eurospin", "Penny Market", "MD Supermercati"],
-            "default": "lidl"
-        },
-        "categoria": {
-            "title": "Categoria / parola chiave (opzionale)",
-            "type": "string",
-            "description": "Filtra per categoria o parola chiave (es. 'pasta', 'carne', 'bevande')",
-            "editor": "textfield",
-            "default": ""
-        },
-        "maxItems": {
-            "title": "Max offerte",
-            "type": "integer",
-            "description": "Numero massimo di offerte da restituire",
-            "default": 200,
-            "minimum": 1,
-            "maximum": 5000
-        },
-        "proxyConfig": {
-            "title": "Proxy configuration",
-            "type": "object",
-            "description": "Configurazione proxy Apify",
-            "editor": "proxy",
-            "default": {"useApifyProxy": true}
-        }
+  "title": "Italy Supermarket Deals Scraper",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "catena": {
+      "title": "Catena supermercato",
+      "type": "string",
+      "description": "Seleziona la catena. 'tutti' per tutte le catene supportate.",
+      "editor": "select",
+      "enum": [
+        "tutti",
+        "lidl",
+        "eurospin",
+        "conad",
+        "penny",
+        "md",
+        "aldi",
+        "coop",
+        "carrefour"
+      ],
+      "enumTitles": [
+        "Tutte",
+        "Lidl",
+        "Eurospin",
+        "Conad",
+        "Penny Market",
+        "MD Discount",
+        "Aldi",
+        "Coop",
+        "Carrefour"
+      ],
+      "default": "lidl"
+    },
+    "categoria": {
+      "title": "Categoria / parola chiave (opzionale)",
+      "type": "string",
+      "description": "Filtra per categoria o parola chiave (es. 'pasta', 'carne', 'bevande')",
+      "editor": "textfield",
+      "default": ""
+    },
+    "maxItems": {
+      "title": "Max offerte",
+      "type": "integer",
+      "description": "Numero massimo di offerte da restituire",
+      "default": 200,
+      "minimum": 1,
+      "maximum": 5000
+    },
+    "proxyConfig": {
+      "title": "Proxy configuration",
+      "type": "object",
+      "description": "Configurazione proxy Apify",
+      "editor": "proxy",
+      "default": {
+        "useApifyProxy": true
+      }
     }
+  }
 }
