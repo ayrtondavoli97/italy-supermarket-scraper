@@ -81,7 +81,9 @@ const crawler = new PlaywrightCrawler({
         const { tipo, slug, catName, page: pageNum = 1 } = request.userData;
         log.info(`[${tipo}] ${catName || slug} page=${pageNum}`);
 
-        await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+        await page.goto(request.url, { waitUntil: 'commit', timeout: 30_000 });
+        // Wait for page body to be ready
+        await page.waitForSelector('body', { timeout: 10_000 }).catch(() => {});
         await dismissCookies(page, log);
 
         // Wait for skeleton to disappear
