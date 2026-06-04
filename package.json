@@ -1,5 +1,5 @@
 {
-    "name": "italy-supermarket-scraper",
+    "name": "italy-supermarket-deals-scraper",
     "version": "1.0.0",
     "type": "module",
     "main": "src/main.js",
