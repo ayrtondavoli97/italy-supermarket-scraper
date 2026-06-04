@@ -1,7 +1,6 @@
 /**
  * Italy Supermarket Scraper — Esselunga
  * spesaonline.esselunga.it
- * Products load async — wait for skeleton to be replaced by real cards
  */
 
 import { Actor } from 'apify';
@@ -83,41 +82,23 @@ const crawler = new PlaywrightCrawler({
         await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await dismissCookies(page, log);
 
-        // ── Wait for skeleton to disappear and real products to load ─────
-        log.info('Waiting for products to load (skeleton → real)...');
+        // Wait for skeleton to disappear
         try {
-            // Wait until skeleton cards are gone
             await page.waitForFunction(
                 () => document.querySelectorAll('.product-card-skeleton').length === 0,
                 { timeout: 20_000 }
             );
-            log.info('Skeletons gone');
-        } catch {
-            log.warning('Skeletons still present after 20s');
-        }
+        } catch { log.warning('Skeletons still present after 20s'); }
 
-        // Wait for real product cards to appear
+        // Wait for real product links
         try {
-            await page.waitForSelector(
-                '.product-card:not(.product-card-skeleton), [class*="product-card"]:not([class*="skeleton"])',
-                { timeout: 15_000 }
-            );
-            log.info('Real product cards detected');
-        } catch {
-            log.warning('No real product cards found');
-        }
+            await page.waitForSelector('a[href*="/store/prodotto/"]', { timeout: 15_000 });
+            log.info('Products loaded');
+        } catch { log.warning('No product links found'); }
 
-        // Extra buffer
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(500);
 
-        // Save debug on first scrape
-        if (pageNum === 1 && collected === 0) {
-            const html = await page.content();
-            await Actor.setValue(`debug_${slug}_loaded`, html, { contentType: 'text/html' });
-            log.info('Debug HTML saved (after load)');
-        }
-
-        const { items, hasNext, debugInfo } = await page.evaluate(() => {
+        const { items, hasNext } = await page.evaluate(() => {
             const g = (el, ...sels) => {
                 for (const s of sels) {
                     try { const f = el.querySelector(s); if (f) return f.textContent.trim(); } catch {}
@@ -125,92 +106,89 @@ const crawler = new PlaywrightCrawler({
                 return '';
             };
 
-            // Real product cards (exclude skeletons)
-            let cards = [...document.querySelectorAll('.product-card:not(.product-card-skeleton)')];
+            // Find the outermost container per product using product links
+            // Each product has a unique /store/prodotto/{id}/ link
+            // We find the smallest container that wraps each link uniquely
+            const productLinks = [...document.querySelectorAll('a[href*="/store/prodotto/"]')];
 
-            // Fallback broader selectors
-            if (cards.length === 0) {
-                cards = [...document.querySelectorAll('[class*="product-card"]:not([class*="skeleton"])')];
-            }
-            if (cards.length === 0) {
-                cards = [...document.querySelectorAll('[class*="ProductCard"]:not([class*="Skeleton"])')];
-            }
-            // Last resort: any element with price € not in skeleton
-            if (cards.length === 0) {
-                const skeletonParents = new Set([...document.querySelectorAll('[class*="skeleton"], [class*="Skeleton"]')]);
-                const isInSkeleton = el => {
-                    let cur = el;
-                    while (cur) { if (skeletonParents.has(cur)) return true; cur = cur.parentElement; }
-                    return false;
-                };
-                cards = [...document.querySelectorAll('li, article, div')].filter(el => {
-                    if (isInSkeleton(el)) return false;
-                    const txt = el.textContent.trim();
-                    return txt.includes('€') && txt.length > 20 && txt.length < 1500 &&
-                        !el.className?.includes('nav') && !el.className?.includes('menu');
-                }).slice(0, 200);
-            }
+            // Deduplicate by href — keep only one link per product URL
+            const seen = new Set();
+            const uniqueLinks = productLinks.filter(a => {
+                const href = a.href;
+                if (seen.has(href)) return false;
+                seen.add(href);
+                return true;
+            });
 
-            const debugInfo = {
-                skeletons: document.querySelectorAll('.product-card-skeleton').length,
-                realCards: document.querySelectorAll('.product-card:not(.product-card-skeleton)').length,
-                cardsUsed: cards.length,
-                firstClass: cards[0]?.className?.substring(0, 100) || 'none',
-                firstHTML: cards[0]?.outerHTML?.substring(0, 500) || 'none',
-            };
+            // For each unique product link, find its card container
+            // The card is the closest ancestor with class containing "product-card" or "item"
+            // or just use the link's parent if no specific container found
+            const cards = uniqueLinks.map(link => {
+                // Walk up to find a suitable card container
+                let el = link.parentElement;
+                while (el && el !== document.body) {
+                    const cls = el.className || '';
+                    if (cls.includes('product-card') || cls.includes('ProductCard') ||
+                        cls.includes('product-item') || cls.includes('ProductItem') ||
+                        el.tagName === 'LI' || el.tagName === 'ARTICLE') {
+                        return el;
+                    }
+                    el = el.parentElement;
+                }
+                return link.parentElement; // fallback
+            }).filter(Boolean);
 
+            // Extract data from each card
             const items = cards.map(card => {
+                const link = card.querySelector('a[href*="/store/prodotto/"]');
+                const url = link?.href || '';
                 const txt = card.textContent.trim();
 
+                // Product name — from link text or specific elements
                 const name = g(card,
-                    '.product-card__name', '.product-name', '[class*="name"]',
-                    '[class*="title"]', '[class*="denomination"]',
-                    'h2', 'h3', 'h4', 'h5', 'p'
-                );
+                    '.product-card__name', '.product-card__title',
+                    '[class*="name"]', '[class*="title"]', '[class*="denomination"]',
+                    'h2', 'h3', 'h4', 'h5'
+                ) || link?.textContent.trim() || '';
+
                 if (!name || name.length < 2 || name.length > 300) return null;
 
-                // Price
+                // Price — look for specific price elements first
                 const priceEl = card.querySelector(
-                    '.product-card__price, .price:not(.old-price), [class*="price"]:not([class*="old"]):not([class*="skeleton"]):not([class*="kg"])'
+                    '.product-card__price .price, .product-card__price-value, [class*="price-value"], [class*="priceValue"]'
                 );
-                const priceMatch = (priceEl?.textContent || txt).match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*€/);
+                const priceMatch = (priceEl?.textContent || '').match(/(\d{1,3}[,\.]\d{2})/)
+                    || txt.match(/(\d{1,3}[,\.]\d{2})\s*€/);
                 const price = priceMatch ? priceMatch[1].replace(',', '.') : '';
 
                 // Old price
                 const oldEl = card.querySelector('.old-price, [class*="old-price"], [class*="barred"], s, del');
                 const oldPrice = oldEl?.textContent.match(/(\d+[,\.]\d{2})/)?.[1]?.replace(',', '.') || '';
 
-                // Price per unit (€/kg etc)
-                const unitEl = card.querySelector('[class*="price-kg"], [class*="price-per"], [class*="priceKg"], [class*="unit-price"]');
+                // Price per kg/l
+                const unitEl = card.querySelector('[class*="price-kg"], [class*="priceKg"], [class*="price-per"], [class*="unit"]');
                 const unitMatch = (unitEl?.textContent || txt).match(/(\d+[,\.]\d+)\s*€\s*\/\s*(kg|l|g|ml|pz)/i);
                 const pricePerUnit = unitMatch ? `${unitMatch[1].replace(',', '.')}€/${unitMatch[2]}` : '';
 
-                const brand = g(card, '.product-card__brand', '[class*="brand"]', '[class*="manufacturer"]');
-                const weight = g(card, '.product-card__weight', '[class*="weight"]', '[class*="format"]', '[class*="quantity"]', '[class*="size"]');
-                const promo = g(card, '.product-card__badge', '[class*="badge"]', '[class*="promo"]', '[class*="offer"]', '[class*="discount"]');
-
-                const img = card.querySelector('img')?.src || card.querySelector('img')?.dataset?.src || '';
-                const link = card.querySelector('a');
-                const url = link?.href || '';
+                const brand = g(card, '[class*="brand"]', '[class*="Brand"]');
+                const weight = g(card, '[class*="weight"]', '[class*="format"]', '[class*="quantity"]');
+                const promo = g(card, '[class*="badge"]', '[class*="promo"]', '[class*="offer"]', '[class*="discount"]');
+                const img = card.querySelector('img')?.src || '';
 
                 return { name, price, oldPrice, pricePerUnit, brand, weight, promo, img, url };
             }).filter(Boolean);
 
-            // Next page
+            // Next page button
             const hasNext = !!([...document.querySelectorAll('button, a')].find(el => {
                 const t = el.textContent.trim().toLowerCase();
                 return (t === '>' || t === '›' || t === 'successiva' || t === 'next') &&
                     !el.disabled && !el.hasAttribute('disabled');
             }));
 
-            return { items, hasNext, debugInfo };
+            return { items, hasNext };
         });
 
-        log.info(`${slug} p${pageNum}: ${items.length} products | skeletons=${debugInfo.skeletons} | realCards=${debugInfo.realCards}`);
-        if (items.length === 0) {
-            log.info(`First card class: ${debugInfo.firstClass}`);
-            log.info(`First card HTML: ${debugInfo.firstHTML}`);
-        }
+        log.info(`${slug} p${pageNum}: ${items.length} products | hasNext=${hasNext}`);
 
         for (const item of items) {
             if (collected >= maxItems) break;
