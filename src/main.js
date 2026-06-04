@@ -60,7 +60,14 @@ const crawler = new PlaywrightCrawler({
     proxyConfiguration,
     launchContext: { launchOptions: { headless: true } },
     requestHandlerTimeoutSecs: 120,
+    navigationTimeoutSecs: 45,
     maxConcurrency: 2,
+    preNavigationHooks: [
+        async (_crawlingContext, gotoOptions) => {
+            gotoOptions.waitUntil = 'domcontentloaded';
+            gotoOptions.timeout = 45_000;
+        },
+    ],
 
     async requestHandler({ page, request, log, addRequests }) {
         const { chain, chainName, page: pageNum = 1 } = request.userData;
@@ -82,7 +89,8 @@ const crawler = new PlaywrightCrawler({
             } catch { /* ignore */ }
         });
 
-        await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        // Playwright crawler already navigated — just wait for DOM
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
         await dismissCookies(page, log);
         await page.waitForTimeout(2000);
 
