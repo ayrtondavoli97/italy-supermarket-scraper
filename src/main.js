@@ -145,18 +145,35 @@ const crawler = new PlaywrightCrawler({
 
         // If on index page, also queue the full flyer Sfoglia pages
         if (isFlyerIndex && pageNum === 1 && collected < maxItems) {
+            // Debug: list all links on page
+            const allLinks = await page.evaluate(() =>
+                [...document.querySelectorAll('a[href]')]
+                    .map(a => ({ text: a.textContent.trim().substring(0, 30), href: a.href.substring(0, 80) }))
+                    .filter(a => a.text.length > 0)
+                    .slice(0, 20)
+            );
+            log.info(`All links on page: ${JSON.stringify(allLinks)}`);
+
             const flyerLinks = await page.evaluate(() => {
                 const results = [];
                 const seen = new Set();
-                for (const a of document.querySelectorAll('a[href]')) {
-                    if (a.textContent.trim().toLowerCase() !== 'sfoglia') continue;
+                // Log all "Sfoglia" links regardless of Attivo
+                const allSfoglia = [...document.querySelectorAll('a[href]')]
+                    .filter(a => a.textContent.trim().toLowerCase() === 'sfoglia');
+                console.log('Sfoglia links total:', allSfoglia.length, allSfoglia.map(a => a.href));
+                for (const a of allSfoglia) {
                     let p = a.parentElement;
+                    let found = false;
                     for (let i = 0; i < 6; i++) {
                         if (p?.textContent.includes('Attivo')) {
                             if (!seen.has(a.href)) { results.push(a.href); seen.add(a.href); }
-                            break;
+                            found = true; break;
                         }
                         p = p?.parentElement;
+                    }
+                    // If no Attivo found but we have Sfoglia, add anyway
+                    if (!found && !seen.has(a.href)) {
+                        results.push(a.href); seen.add(a.href);
                     }
                 }
                 return results.slice(0, 3);
