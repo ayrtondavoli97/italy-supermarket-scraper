@@ -1,6 +1,6 @@
 /**
  * Italy Supermarket Deals Scraper
- * Full-product extractor for confrontavolantini.com viewer modals.
+ * Extracts highlighted products from confrontavolantini.com active flyers.
  */
 import { Actor } from 'apify';
 import { PlaywrightCrawler } from 'crawlee';
@@ -27,201 +27,148 @@ const {
     proxyConfig: proxyConfigInput,
 } = input;
 const proxyConfiguration = proxyConfigInput ? await Actor.createProxyConfiguration(proxyConfigInput) : undefined;
-const requestedChain = String(catena).toLowerCase();
-const sourcesToScrape = requestedChain === 'tutti'
-    ? Object.entries(SOURCES)
-    : Object.entries(SOURCES).filter(([key]) => key === requestedChain);
-if (!sourcesToScrape.length) {
-    console.error(`Catena non supportata: ${catena}`);
-    await Actor.exit(1);
-}
+const requested = String(catena).toLowerCase();
+const targets = requested === 'tutti' ? Object.entries(SOURCES) : Object.entries(SOURCES).filter(([key]) => key === requested);
+if (!targets.length) throw new Error(`Catena non supportata: ${catena}`);
 console.log(`Catena="${catena}" | Categoria="${categoria || 'tutte'}" | Max=${maxItems} | Diagnostics=${diagnosticMode}`);
 
-let collected = 0;
-const outputKeys = new Set();
+let savedCount = 0;
+const savedKeys = new Set();
 const crawler = new PlaywrightCrawler({
     proxyConfiguration,
     launchContext: { launchOptions: { headless: true } },
-    requestHandlerTimeoutSecs: 240,
-    navigationTimeoutSecs: 45,
     maxConcurrency: 1,
-    preNavigationHooks: [async (_ctx, options) => {
-        options.waitUntil = 'domcontentloaded';
-        options.timeout = 45_000;
-    }],
+    navigationTimeoutSecs: 45,
+    requestHandlerTimeoutSecs: 240,
+    preNavigationHooks: [async (_ctx, options) => { options.waitUntil = 'domcontentloaded'; options.timeout = 45000; }],
     async requestHandler({ page, request, log }) {
         const { chain, chainName } = request.userData;
-        const apiOffers = [];
-        const apiDump = [];
-        page.on('response', async (response) => {
-            if (!response.url().includes('/api/offers?')) return;
-            try {
-                const json = await response.json();
-                const parsed = extractOffersFromJson(json, chainName);
-                apiOffers.push(...parsed);
-                apiDump.push({ url: response.url(), parsedCount: parsed.length, json });
-                log.info(`OFFERS API ${response.url()} -> ${parsed.length} offers`);
-            } catch (error) {
-                log.warning(`Unable to parse OFFERS API: ${error.message}`);
-            }
-        });
-        await page.waitForLoadState('domcontentloaded').catch(() => {});
-        await dismissCookies(page, log);
+        await dismissCookies(page);
         await page.waitForTimeout(800);
-        const modalOffers = await scrapeAllFlyers(page, chain, chainName, maxItems - collected, log, diagnosticMode);
-        await page.waitForTimeout(700);
-        if (diagnosticMode) {
-            await Actor.setValue(`debug_${chain}_RAW_OFFERS_API`, JSON.stringify(apiDump, null, 2), { contentType: 'application/json' });
-            await Actor.setValue(`debug_${chain}_MODAL_ITEMS`, JSON.stringify(modalOffers, null, 2), { contentType: 'application/json' });
+        const flyers = await collectFlyers(page);
+        log.info(`${chainName}: active flyers IDs=${flyers.map((f) => f.flyerId).join(', ') || 'none'}`);
+        if (diagnosticMode) await putJson(`debug_${chain}_FLYERS`, flyers);
+
+        let products = [];
+        for (const flyer of flyers) {
+            if (products.length >= maxItems - savedCount) break;
+            const flyerProducts = await requestFlyerPages(page, chain, chainName, flyer, maxItems - savedCount - products.length, log, diagnosticMode);
+            products.push(...flyerProducts);
         }
-        let items = mergeUniqueOffers([...apiOffers, ...modalOffers]);
-        if (!items.length) items = await parsePreview(page, chainName, log);
-        if (categoria) {
-            const term = String(categoria).toLowerCase();
-            items = items.filter((item) => String(item.name).toLowerCase().includes(term) || String(item.categoria || '').toLowerCase().includes(term));
+        products = uniqueProducts(products);
+
+        if (!products.length) {
+            log.warning(`${chainName}: direct API returned no products; trying one UI click only for diagnostics/fallback.`);
+            products = await modalFallback(page, chainName, log);
         }
-        log.info(`${chainName}: extracted candidates=${items.length}`);
-        for (const item of items) {
-            if (collected >= maxItems) break;
-            const key = itemKey(item);
-            if (outputKeys.has(key)) continue;
-            outputKeys.add(key);
-            await Actor.pushData(item);
-            collected++;
+        if (!products.length) products = await previewFallback(page, chainName, log);
+
+        const term = String(categoria || '').toLowerCase();
+        if (term) products = products.filter((p) => `${p.name} ${p.categoria || ''}`.toLowerCase().includes(term));
+        log.info(`${chainName}: candidates=${products.length}`);
+        for (const product of products) {
+            if (savedCount >= maxItems) break;
+            const key = productKey(product);
+            if (savedKeys.has(key)) continue;
+            savedKeys.add(key);
+            await Actor.pushData(product);
+            savedCount += 1;
         }
-        log.info(`${chainName}: saved total=${collected}`);
+        log.info(`${chainName}: saved total=${savedCount}`);
     },
 });
 
-await crawler.run(sourcesToScrape.map(([chain, source]) => ({
-    url: source.url,
-    uniqueKey: `chain:${chain}`,
-    userData: { chain, chainName: source.name },
-})));
-console.log(`Done. Total saved: ${collected} offers.`);
+await crawler.run(targets.map(([chain, source]) => ({ url: source.url, uniqueKey: chain, userData: { chain, chainName: source.name } })));
+console.log(`Done. Total saved: ${savedCount} offers.`);
 await Actor.exit();
 
-async function scrapeAllFlyers(page, chain, chainName, limit, log, diagnostics) {
-    const result = [];
-    const covers = page.locator('button.chain-mini-thumb-btn');
-    const count = await covers.count().catch(() => 0);
-    log.info(`${chainName}: flyer covers found=${count}`);
-    for (let index = 0; index < count && result.length < limit; index++) {
-        const cover = covers.nth(index);
-        const info = await cover.evaluate((element) => {
-            const src = element.querySelector('img')?.getAttribute('src') || '';
-            const match = src.match(/flyer0*(\d+)_p\d+/i);
-            const validity = element.closest('.chain-mini-card')?.querySelector('.chain-mini-dates')?.textContent?.trim() || '';
-            return { flyerId: match ? Number(match[1]) : '', validity };
-        }).catch(() => ({ flyerId: '', validity: '' }));
-        log.info(`${chainName}: open flyer index=${index}, flyerId=${info.flyerId}, validity=${info.validity}`);
-        await cover.click({ force: true });
-        await page.waitForTimeout(500);
-        const closeButton = page.locator('button[aria-label="Chiudi visualizzatore"]').filter({ visible: true }).last();
-        if (!(await closeButton.isVisible({ timeout: 8000 }).catch(() => false))) {
-            log.warning(`${chainName}: viewer not opened for flyer index=${index}`);
-            continue;
+async function collectFlyers(page) {
+    return page.locator('button.chain-mini-thumb-btn').evaluateAll((buttons) => buttons.map((button, index) => {
+        const src = button.querySelector('img')?.getAttribute('src') || '';
+        const match = src.match(/flyer0*(\d+)_p\d+/i);
+        return { index, flyerId: match ? Number(match[1]) : null, coverImage: src };
+    }).filter((flyer) => flyer.flyerId));
+}
+
+async function requestFlyerPages(page, chain, chainName, flyer, limit, log, diagnostics) {
+    const results = [];
+    for (let pageNumber = 1; pageNumber <= 80 && results.length < limit; pageNumber++) {
+        const response = await page.evaluate(async ({ flyerId, pageNumber }) => {
+            const endpoint = `/api/offers?flyer_id=${flyerId}&page_number=${pageNumber}`;
+            const res = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+            const text = await res.text();
+            let body = null;
+            try { body = JSON.parse(text); } catch { /* diagnostics below */ }
+            return { endpoint, status: res.status, body, textPreview: text.slice(0, 400) };
+        }, { flyerId: flyer.flyerId, pageNumber }).catch((error) => ({ error: String(error) }));
+
+        if (diagnostics) await putJson(`debug_${chain}_API_${flyer.flyerId}_PAGE_${pageNumber}`, response);
+        if (response.error || response.status !== 200 || !response.body) {
+            log.warning(`${chainName}: flyer=${flyer.flyerId} page=${pageNumber} API failed ${JSON.stringify(response).slice(0, 160)}`);
+            break;
         }
-        const dialog = closeButton.locator('xpath=ancestor::*[@role="dialog"][1]');
-        if (!(await dialog.isVisible({ timeout: 3000 }).catch(() => false))) {
-            log.warning(`${chainName}: viewer dialog ancestor not found for flyer index=${index}`);
-            await closeButton.click({ force: true }).catch(() => {});
-            continue;
-        }
-        const pages = await getTotalPages(dialog);
-        log.info(`${chainName}: flyerId=${info.flyerId}, pages=${pages}`);
-        for (let number = 1; number <= pages && result.length < limit; number++) {
-            await page.waitForTimeout(450);
-            const offers = await extractModalOffers(dialog, chainName, info, number);
-            result.push(...offers);
-            log.info(`${chainName}: flyerId=${info.flyerId} page=${number}/${pages} hotspot offers=${offers.length}`);
-            if (diagnostics) await Actor.setValue(`debug_${chain}_FLYER_${info.flyerId}_PAGE_${number}`, JSON.stringify(offers, null, 2), { contentType: 'application/json' });
-            if (number === pages) break;
-            const next = dialog.locator('button[aria-label="Pagina successiva"]:not([disabled])').first();
-            if (!(await next.isVisible({ timeout: 2000 }).catch(() => false))) break;
-            await next.click({ force: true });
-            await page.waitForTimeout(700);
-        }
-        await closeButton.click({ force: true }).catch(() => page.keyboard.press('Escape').catch(() => {}));
-        await page.waitForTimeout(500);
+        const parsed = parseApiPayload(response.body, chainName, flyer.flyerId, pageNumber);
+        log.info(`${chainName}: API flyer=${flyer.flyerId} page=${pageNumber} offers=${parsed.length}`);
+        if (!parsed.length) break;
+        results.push(...parsed);
     }
-    return mergeUniqueOffers(result);
+    return uniqueProducts(results).slice(0, limit);
 }
 
-async function getTotalPages(dialog) {
-    const text = await dialog.locator('text=/Pagina\\s+\\d+\\s*\\/\\s*\\d+/').first().innerText().catch(() => 'Pagina 1 / 1');
-    const match = text.match(/Pagina\s+\d+\s*\/\s*(\d+)/i);
-    return match ? Number(match[1]) : 1;
-}
-
-async function extractModalOffers(dialog, chainName, info, pageNumber) {
-    return dialog.evaluate((root, args) => {
-        const labels = [...new Set([...root.querySelectorAll('[aria-label^="Aggiungi "]')].map((element) => element.getAttribute('aria-label') || ''))];
-        const image = root.querySelector('img[alt*="Volantino"]')?.getAttribute('src') || '';
-        return labels.map((label) => {
-            const match = label.match(/^Aggiungi\s+(.+?)\s+alla Nota Spesa,\s*([0-9]+(?:[.,][0-9]{1,2})?)\s*€$/i);
-            if (!match) return null;
-            return {
-                name: match[1].trim(), catena: args.chainName, categoria: '', priceOffer: match[2].replace(',', '.'),
-                priceOriginal: '', discount: '', validFrom: '', validTo: '', validity: args.validity, format: '',
-                flyerId: args.flyerId, pageNumber: args.pageNumber, img: image, url: location.href, extractionSource: 'viewer_hotspot',
-            };
-        }).filter(Boolean);
-    }, { chainName, flyerId: info.flyerId, validity: info.validity, pageNumber }).catch(() => []);
-}
-
-function extractOffersFromJson(json, chainName) {
-    const arrays = [];
-    const visit = (value, depth = 0) => {
-        if (!value || depth > 8) return;
-        if (Array.isArray(value)) { arrays.push(value); value.slice(0, 10).forEach((child) => visit(child, depth + 1)); }
-        else if (typeof value === 'object') Object.values(value).forEach((child) => visit(child, depth + 1));
+function parseApiPayload(body, chainName, flyerId, pageNumber) {
+    const objects = [];
+    const walk = (value, depth = 0) => {
+        if (!value || depth > 7) return;
+        if (Array.isArray(value)) return value.forEach((item) => walk(item, depth + 1));
+        if (typeof value !== 'object') return;
+        objects.push(value);
+        Object.values(value).forEach((item) => walk(item, depth + 1));
     };
-    visit(json);
-    const result = [];
-    for (const array of arrays) {
-        for (const product of array) {
-            if (!product || typeof product !== 'object' || Array.isArray(product)) continue;
-            const name = product.product_name || product.name || product.title || product.description || product.nome || product.label;
-            const price = product.price_value ?? product.price ?? product.salePrice ?? product.offerPrice ?? product.prezzoOfferta ?? product.prezzo;
-            if (!name || price === undefined || price === null) continue;
-            result.push({
-                name: String(name).trim(), catena: product.store_name || chainName, categoria: product.category || product.categoria || '',
-                priceOffer: normalizePrice(price), priceOriginal: normalizePrice(product.original_price ?? product.originalPrice ?? product.regularPrice ?? ''),
-                discount: String(product.discount ?? product.sconto ?? ''), validFrom: product.valid_from || product.validFrom || '', validTo: product.valid_to || product.validTo || '',
-                format: product.quantity || '', flyerId: product.flyer_id || '', pageNumber: product.page_number || '', offerId: product.offer_id || '',
-                img: product.page_image_url || '', url: '', extractionSource: 'offers_api',
-            });
-        }
-    }
-    return mergeUniqueOffers(result);
+    walk(body);
+    return objects.map((p) => {
+        const name = p.product_name || p.productName || p.name || p.title || p.nome || p.description;
+        const price = p.price_value ?? p.priceValue ?? p.price ?? p.offer_price ?? p.offerPrice ?? p.prezzo;
+        if (!name || price === undefined || price === null) return null;
+        return {
+            name: String(name).trim(), catena: p.store_name || chainName, categoria: p.category || '',
+            priceOffer: normalizePrice(price), priceOriginal: normalizePrice(p.original_price ?? p.originalPrice ?? ''),
+            discount: String(p.discount ?? ''), validFrom: p.valid_from || '', validTo: p.valid_to || '',
+            format: p.quantity || p.format || '', flyerId: p.flyer_id || flyerId, pageNumber: p.page_number || pageNumber,
+            offerId: p.offer_id || p.id || '', img: p.page_image_url || p.image_url || '', url: '', extractionSource: 'offers_api',
+        };
+    }).filter(Boolean);
 }
 
-async function parsePreview(page, chainName, log) {
+async function modalFallback(page, chainName, log) {
+    const cover = page.locator('button.chain-mini-thumb-btn').first();
+    if (!(await cover.isVisible().catch(() => false))) return [];
+    await cover.click({ force: true }).catch(() => {});
+    const close = page.locator('button[aria-label="Chiudi visualizzatore"]').last();
+    await close.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+    if (!(await close.isVisible().catch(() => false))) return [];
+    const items = await page.evaluate((store) => [...document.querySelectorAll('[aria-label^="Aggiungi "]')].map((node) => {
+        const label = node.getAttribute('aria-label') || '';
+        const match = label.match(/^Aggiungi\s+(.+?)\s+alla Nota Spesa,\s*([0-9]+(?:[.,][0-9]{1,2})?)\s*€$/i);
+        return match ? { name: match[1], catena: store, priceOffer: match[2].replace(',', '.'), extractionSource: 'viewer_hotspot' } : null;
+    }).filter(Boolean), chainName).catch(() => []);
+    log.info(`${chainName}: modal fallback offers=${items.length}`);
+    return items;
+}
+
+async function previewFallback(page, chainName, log) {
     const lines = await page.evaluate(() => document.body.innerText.split(/[\n\r]+/).map((line) => line.trim()).filter(Boolean)).catch(() => []);
-    const result = [];
-    for (let index = 2; index < lines.length; index++) {
-        if (!/^(?:€\s*)?\d{1,4}[,.]\d{2}(?:\s*€)?$/.test(lines[index])) continue;
-        const name = lines[index - 2].replace(/^[^\w\u00C0-\u024F]+/, '').trim();
-        if (name.length >= 3) result.push({ name, catena: chainName, priceOffer: normalizePrice(lines[index]), format: lines[index - 1], extractionSource: 'preview_text' });
+    const items = [];
+    for (let i = 2; i < lines.length; i++) {
+        if (!/^\d{1,4}[,.]\d{2}\s*€$/.test(lines[i])) continue;
+        const name = lines[i - 2].replace(/^[^\w\u00C0-\u024F]+/, '').trim();
+        if (name.length > 2) items.push({ name, catena: chainName, priceOffer: normalizePrice(lines[i]), format: lines[i - 1], extractionSource: 'preview_text' });
     }
-    log.info(`${chainName}: fallback preview offers=${result.length}`);
-    return mergeUniqueOffers(result);
+    log.info(`${chainName}: preview fallback offers=${items.length}`);
+    return uniqueProducts(items);
 }
 
 function normalizePrice(value) { return String(value ?? '').replace(/€/g, '').trim().replace(',', '.'); }
-function itemKey(item) { return `${String(item.catena).toLowerCase()}|${String(item.flyerId || 'no-flyer')}|${String(item.name).toLowerCase().replace(/\s+/g, ' ').trim()}|${normalizePrice(item.priceOffer)}`; }
-function mergeUniqueOffers(items) {
-    const map = new Map();
-    for (const item of items) {
-        if (!item?.name || !item.priceOffer) continue;
-        const key = itemKey(item);
-        if (!map.has(key) || item.extractionSource === 'offers_api') map.set(key, item);
-    }
-    return [...map.values()];
-}
-async function dismissCookies(page, log) {
-    for (const label of ['Continua senza accettare', 'Rifiuta', 'Accetta tutti', 'Accetta', 'OK', 'Continua']) {
-        try { const button = page.locator(`button:has-text("${label}")`).first(); if (await button.isVisible({ timeout: 800 })) { await button.click(); log.info(`Cookie dismissed: ${label}`); return; } } catch { /* ignore */ }
-    }
-}
+function productKey(p) { return `${String(p.catena).toLowerCase()}|${String(p.flyerId || 'x')}|${String(p.name).toLowerCase()}|${normalizePrice(p.priceOffer)}`; }
+function uniqueProducts(items) { const map = new Map(); for (const item of items) if (item?.name && item?.priceOffer && !map.has(productKey(item))) map.set(productKey(item), item); return [...map.values()]; }
+async function putJson(key, value) { await Actor.setValue(key, JSON.stringify(value, null, 2), { contentType: 'application/json' }); }
+async function dismissCookies(page) { for (const label of ['Continua senza accettare', 'Rifiuta', 'Accetta tutti', 'Accetta', 'OK']) { try { const b = page.locator(`button:has-text("${label}")`).first(); if (await b.isVisible({ timeout: 500 })) { await b.click(); return; } } catch { /* ignore */ } } }
