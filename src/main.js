@@ -25,6 +25,7 @@ const {
     categoria = '',
     maxItems = 500,
     diagnosticMode = false,
+    investigateZeroResults = false,
     proxyConfig: proxyConfigInput,
 } = input;
 const runStartedAt = new Date().toISOString();
@@ -32,7 +33,7 @@ const proxyConfiguration = proxyConfigInput ? await Actor.createProxyConfigurati
 const requested = String(catena).toLowerCase();
 const targets = requested === 'tutti' ? Object.entries(SOURCES) : Object.entries(SOURCES).filter(([key]) => key === requested);
 if (!targets.length) throw new Error(`Catena non supportata: ${catena}`);
-console.log(`Catena="${catena}" | Categoria="${categoria || 'tutte'}" | Max=${maxItems} | Diagnostics=${diagnosticMode}`);
+console.log(`Catena="${catena}" | Categoria="${categoria || 'tutte'}" | Max=${maxItems} | Diagnostics=${diagnosticMode} | InvestigateZeroResults=${investigateZeroResults}`);
 
 let savedCount = 0;
 const savedKeys = new Set();
@@ -42,13 +43,14 @@ const crawler = new PlaywrightCrawler({
     launchContext: { launchOptions: { headless: true } },
     maxConcurrency: 1,
     navigationTimeoutSecs: 45,
-    requestHandlerTimeoutSecs: 240,
+    requestHandlerTimeoutSecs: investigateZeroResults ? 300 : 240,
     preNavigationHooks: [async (_ctx, options) => { options.waitUntil = 'domcontentloaded'; options.timeout = 45_000; }],
     async requestHandler({ page, request, log }) {
         const { chain, chainName, sourceUrl } = request.userData;
         const report = {
             chainSlug: chain, chainName, sourceUrl, activeFlyers: 0, flyerIds: [], structuredApiProducts: 0,
             fallbackProducts: 0, savedProducts: 0, apiPagesWithProducts: 0, apiPagesEmpty: 0, status: 'processing',
+            investigationSaved: false,
         };
         if (savedCount >= maxItems) {
             report.status = 'skipped_max_items_reached';
@@ -96,6 +98,11 @@ const crawler = new PlaywrightCrawler({
         else if (report.fallbackProducts > 0) report.status = 'preview_fallback';
         else if (report.activeFlyers > 0) report.status = 'active_flyers_without_structured_offers';
         else report.status = 'no_active_flyers_detected';
+
+        if (investigateZeroResults && report.structuredApiProducts === 0) {
+            await saveZeroResultInvestigation(page, chain, chainName, sourceUrl, flyers, log);
+            report.investigationSaved = true;
+        }
         coverage.push(report);
         log.info(`${chainName}: saved=${report.savedProducts}, status=${report.status}, total run=${savedCount}`);
     },
@@ -108,7 +115,7 @@ await crawler.run(targets.map(([chain, source]) => ({
 })));
 const summary = {
     actor: 'Italy Supermarket Deals Scraper', scrapedAt: runStartedAt, requestedChain: catena, categoryFilter: categoria || '',
-    maxItems, totalProductsSaved: savedCount, maxItemsReached: savedCount >= maxItems, coverage,
+    maxItems, diagnosticMode, investigateZeroResults, totalProductsSaved: savedCount, maxItemsReached: savedCount >= maxItems, coverage,
     structuredApiChains: coverage.filter((row) => row.status === 'structured_api').map((row) => row.chainSlug),
     fallbackChains: coverage.filter((row) => row.status === 'preview_fallback').map((row) => row.chainSlug),
     noProductsChains: coverage.filter((row) => !['structured_api', 'preview_fallback'].includes(row.status)).map((row) => row.chainSlug),
@@ -211,6 +218,95 @@ async function previewFallback(page, chain, chainName, sourceUrl, scrapedAt, log
     }
     log.info(`${chainName}: preview fallback offers=${products.length}`);
     return uniqueProducts(products);
+}
+
+async function saveZeroResultInvestigation(page, chain, chainName, sourceUrl, flyers, log) {
+    const prefix = `investigate_${chain}`;
+    const networkEvents = [];
+    const responseListener = (response) => {
+        const url = response.url();
+        if (!/volantin|sfoglia|offert|offer|catalog|promo|flyer|leaflet|brochure|pdf|api|json/i.test(url)) return;
+        if (networkEvents.length < 200) networkEvents.push({ status: response.status(), contentType: response.headers()['content-type'] || '', url });
+    };
+    page.on('response', responseListener);
+    const initialAudit = await collectStructureAudit(page);
+    await Actor.setValue(`${prefix}_FULL_HTML`, await page.content(), { contentType: 'text/html' });
+    await Actor.setValue(`${prefix}_FULL_TEXT`, await page.locator('body').innerText().catch(() => ''), { contentType: 'text/plain' });
+    await Actor.setValue(`${prefix}_SCREENSHOT`, await page.screenshot({ fullPage: true }), { contentType: 'image/png' });
+    await putJson(`${prefix}_DOM_AUDIT`, { chain, chainName, sourceUrl, discoveredFlyers: flyers, ...initialAudit });
+    log.info(`INVESTIGATE ${chainName}: candidates=${initialAudit.clickableCandidates.length}, images=${initialAudit.images.length}, scripts=${initialAudit.scripts.length}, resources=${initialAudit.resources.length}`);
+
+    const clickProbes = [];
+    const probeCount = Math.min(initialAudit.clickableCandidates.length, 3);
+    for (let index = 0; index < probeCount; index++) {
+        if (page.url() !== sourceUrl) {
+            await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+            await page.waitForTimeout(700);
+        }
+        const beforeUrl = page.url();
+        const beforeResourceCount = networkEvents.length;
+        const clicked = await page.evaluate((probeIndex) => {
+            const pattern = /volantin|sfoglia|offert|catalog|promo|flyer|leaflet|brochure/i;
+            const nodes = [...document.querySelectorAll('button, a, [role="button"], [onclick], [data-href], [data-url]')]
+                .filter((node) => pattern.test(`${node.textContent || ''} ${node.getAttribute('aria-label') || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('href') || ''} ${node.getAttribute('class') || ''}`));
+            const node = nodes[probeIndex];
+            if (!node) return null;
+            const description = { tag: node.tagName, text: (node.textContent || '').trim().slice(0, 160), html: node.outerHTML.slice(0, 1000) };
+            node.click();
+            return description;
+        }, index).catch((error) => ({ error: String(error) }));
+        await page.waitForTimeout(1500);
+        const afterAudit = await collectStructureAudit(page);
+        clickProbes.push({
+            index, clicked, beforeUrl, afterUrl: page.url(), dialogs: afterAudit.dialogs, frames: afterAudit.frames,
+            newNetworkEvents: networkEvents.slice(beforeResourceCount), postClickCandidates: afterAudit.clickableCandidates.slice(0, 10),
+        });
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(250);
+    }
+    page.off('response', responseListener);
+    await putJson(`${prefix}_CLICK_PROBES`, clickProbes);
+    await putJson(`${prefix}_NETWORK_AFTER_CLICKS`, networkEvents);
+    log.info(`INVESTIGATE ${chainName}: saved ${prefix}_FULL_HTML, ${prefix}_FULL_TEXT, ${prefix}_SCREENSHOT, ${prefix}_DOM_AUDIT, ${prefix}_CLICK_PROBES, ${prefix}_NETWORK_AFTER_CLICKS`);
+}
+
+async function collectStructureAudit(page) {
+    return page.evaluate(() => {
+        const pattern = /volantin|sfoglia|offert|offer|catalog|promo|flyer|leaflet|brochure|pdf/i;
+        const attributes = (element) => Object.fromEntries([...element.attributes].slice(0, 30).map((attribute) => [attribute.name, attribute.value]));
+        const describe = (element) => ({
+            tag: element.tagName,
+            text: (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 250),
+            attrs: attributes(element),
+            outerHTML: element.outerHTML.slice(0, 1500),
+        });
+        const interactives = [...document.querySelectorAll('button, a, [role="button"], [onclick], [data-href], [data-url]')];
+        const clickableCandidates = interactives
+            .filter((element) => pattern.test(`${element.textContent || ''} ${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''} ${element.getAttribute('href') || ''} ${element.getAttribute('class') || ''}`))
+            .slice(0, 50)
+            .map(describe);
+        const images = [...document.querySelectorAll('img')]
+            .map((image) => ({ src: image.currentSrc || image.src || '', alt: image.alt || '', className: image.className || '', parentPreview: image.parentElement?.outerHTML.slice(0, 800) || '' }))
+            .filter((image) => pattern.test(`${image.src} ${image.alt} ${image.className}`))
+            .slice(0, 100);
+        const links = [...document.querySelectorAll('a[href]')]
+            .map((link) => ({ href: link.href, text: (link.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 150), attrs: attributes(link) }))
+            .filter((link) => pattern.test(`${link.href} ${link.text}`))
+            .slice(0, 100);
+        const scripts = [...document.querySelectorAll('script')]
+            .map((script) => ({ src: script.src || '', type: script.type || '', text: script.src ? '' : (script.textContent || '').slice(0, 5000) }))
+            .filter((script) => pattern.test(`${script.src} ${script.text}`))
+            .slice(0, 30);
+        const resources = performance.getEntriesByType('resource')
+            .map((entry) => ({ url: entry.name, type: entry.initiatorType, duration: Math.round(entry.duration) }))
+            .filter((entry) => pattern.test(entry.url))
+            .slice(0, 200);
+        const dialogs = [...document.querySelectorAll('[role="dialog"], dialog, [class*="modal" i]')].slice(0, 20).map(describe);
+        const frames = [...document.querySelectorAll('iframe')].map((frame) => ({ src: frame.src || '', title: frame.title || '', outerHTML: frame.outerHTML.slice(0, 1000) })).slice(0, 30);
+        const jsonScripts = [...document.querySelectorAll('script[type="application/json"], script#__NEXT_DATA__, script[type="application/ld+json"]')]
+            .map((script) => ({ id: script.id || '', type: script.type || '', preview: (script.textContent || '').slice(0, 10000) })).slice(0, 20);
+        return { url: location.href, title: document.title, clickableCandidates, images, links, scripts, resources, dialogs, frames, jsonScripts };
+    }).catch((error) => ({ url: page.url(), error: String(error), clickableCandidates: [], images: [], links: [], scripts: [], resources: [], dialogs: [], frames: [], jsonScripts: [] }));
 }
 
 function normalizeDateRange(fromRaw, toRaw) {
