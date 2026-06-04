@@ -92,19 +92,31 @@ async function collectFlyers(page) {
 
 async function requestFlyerPages(page, chain, chainName, flyer, limit, log, diagnostics) {
     const results = [];
+    const origin = new URL(page.url()).origin;
     for (let pageNumber = 1; pageNumber <= 80 && results.length < limit; pageNumber++) {
-        const response = await page.evaluate(async ({ flyerId, pageNumber }) => {
-            const endpoint = `/api/offers?flyer_id=${flyerId}&page_number=${pageNumber}`;
-            const res = await fetch(endpoint, { headers: { Accept: 'application/json' } });
-            const text = await res.text();
-            let body = null;
-            try { body = JSON.parse(text); } catch { /* diagnostics below */ }
-            return { endpoint, status: res.status, body, textPreview: text.slice(0, 400) };
-        }, { flyerId: flyer.flyerId, pageNumber }).catch((error) => ({ error: String(error) }));
+        const endpoint = `${origin}/api/offers?flyer_id=${encodeURIComponent(flyer.flyerId)}&page_number=${encodeURIComponent(pageNumber)}`;
+        let response = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const res = await page.request.get(endpoint, {
+                    headers: { Accept: 'application/json' },
+                    timeout: 15000,
+                });
+                const text = await res.text();
+                let body = null;
+                try { body = JSON.parse(text); } catch { /* stored in diagnostics */ }
+                response = { endpoint, status: res.status(), body, textPreview: text.slice(0, 400), attempt };
+                if (response.status === 200 && response.body) break;
+            } catch (error) {
+                response = { endpoint, error: String(error), attempt };
+            }
+            log.warning(`${chainName}: retry flyer=${flyer.flyerId} page=${pageNumber} attempt=${attempt}`);
+            await page.waitForTimeout(attempt * 400);
+        }
 
         if (diagnostics) await putJson(`debug_${chain}_API_${flyer.flyerId}_PAGE_${pageNumber}`, response);
-        if (response.error || response.status !== 200 || !response.body) {
-            log.warning(`${chainName}: flyer=${flyer.flyerId} page=${pageNumber} API failed ${JSON.stringify(response).slice(0, 160)}`);
+        if (!response || response.error || response.status !== 200 || !response.body) {
+            log.warning(`${chainName}: flyer=${flyer.flyerId} page=${pageNumber} API failed after retries ${JSON.stringify(response).slice(0, 180)}`);
             break;
         }
         const parsed = parseApiPayload(response.body, chainName, flyer.flyerId, pageNumber);
