@@ -1,38 +1,45 @@
 {
     "actorSpecification": 1,
     "name": "italy-supermarket-deals-scraper",
-    "title": "Italy Supermarket Deals Scraper — Weekly Offers & Discounts",
-    "description": "Scrapes current weekly deals and promotions from all major Italian supermarkets (Esselunga, Conad, Lidl, Eurospin, Carrefour, Coop, MD, Penny, Aldi, Bennet and more) via VolantinoFacile.it. Returns product name, offer price, original price, discount %, chain, validity dates.",
-    "version": "1.0",
+    "title": "Italian Supermarket Flyers & Deals Scraper",
+    "description": "Extracts current promotional products from Italian supermarket flyers. Structured offer extraction currently works for Lidl, Eurospin, MD Discount and Aldi, with explicitly marked fallback coverage where available. Returns prices, validity dates, flyer/page references, source quality and extraction timestamp.",
+    "version": "1.1",
     "buildTag": "latest",
     "dockerfile": "./Dockerfile",
     "input": "./input_schema.json",
     "defaultRunOptions": {
-        "timeoutSecs": 300,
+        "timeoutSecs": 600,
         "memoryMbytes": 1024
     },
     "storages": {
         "dataset": {
             "actorSpecification": 1,
-            "title": "Supermarket Deals",
+            "title": "Italian Supermarket Promotional Offers",
             "views": {
                 "overview": {
-                    "title": "Deals",
+                    "title": "Current Deals",
                     "transformation": {
-                        "fields": ["name","catena","categoria","priceOffer","priceOriginal","discount","validity","img","url"]
+                        "fields": ["name", "catena", "chainSlug", "priceOffer", "priceOriginal", "discount", "format", "validFrom", "validTo", "dataQuality", "flyerId", "pageNumber", "offerId", "img", "sourcePageUrl", "scrapedAt"]
                     },
                     "display": {
                         "component": "table",
                         "properties": {
-                            "name":          { "label": "Prodotto",          "format": "text" },
-                            "catena":        { "label": "Catena",            "format": "text" },
-                            "categoria":     { "label": "Categoria",         "format": "text" },
-                            "priceOffer":    { "label": "Prezzo Offerta €",  "format": "text" },
-                            "priceOriginal": { "label": "Prezzo Originale €","format": "text" },
-                            "discount":      { "label": "Sconto",            "format": "text" },
-                            "validity":      { "label": "Validità",          "format": "text" },
-                            "img":           { "label": "Immagine",          "format": "image" },
-                            "url":           { "label": "Link",              "format": "link" }
+                            "name": { "label": "Product", "format": "text" },
+                            "catena": { "label": "Chain", "format": "text" },
+                            "chainSlug": { "label": "Chain slug", "format": "text" },
+                            "priceOffer": { "label": "Offer price €", "format": "text" },
+                            "priceOriginal": { "label": "Original price €", "format": "text" },
+                            "discount": { "label": "Discount", "format": "text" },
+                            "format": { "label": "Size / format", "format": "text" },
+                            "validFrom": { "label": "Valid from", "format": "text" },
+                            "validTo": { "label": "Valid to", "format": "text" },
+                            "dataQuality": { "label": "Data quality", "format": "text" },
+                            "flyerId": { "label": "Flyer ID", "format": "text" },
+                            "pageNumber": { "label": "Page", "format": "text" },
+                            "offerId": { "label": "Offer ID", "format": "text" },
+                            "img": { "label": "Flyer image", "format": "image" },
+                            "sourcePageUrl": { "label": "Source page", "format": "link" },
+                            "scrapedAt": { "label": "Scraped at", "format": "text" }
                         }
                     }
                 }
