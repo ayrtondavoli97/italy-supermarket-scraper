@@ -1,0 +1,38 @@
+{
+    "title": "Italy Supermarket Scraper",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "categoria": {
+            "title": "Categoria",
+            "type": "string",
+            "description": "Categoria di prodotti da scrapare. Lascia vuoto per tutte le categorie.",
+            "editor": "select",
+            "enum": ["", "frutta-verdura", "carne", "pesce", "salumi-formaggi", "pane-pasticceria", "surgelati", "pasta-riso-cereali", "sughi-conserve", "olio-condimenti", "dolci-snack", "colazione", "bevande", "vini-birre", "acqua", "pulizia-casa", "igiene-persona", "neonati", "animali", "bio"],
+            "enumTitles": ["Tutte", "Frutta e Verdura", "Carne", "Pesce", "Salumi e Formaggi", "Pane e Pasticceria", "Surgelati", "Pasta, Riso e Cereali", "Sughi e Conserve", "Olio e Condimenti", "Dolci e Snack", "Colazione", "Bevande", "Vini, Birre e Alcolici", "Acqua", "Pulizia Casa", "Igiene e Cura Persona", "Neonati e Bambini", "Animali", "Bio e Vegano"],
+            "default": ""
+        },
+        "query": {
+            "title": "Ricerca prodotto (opzionale)",
+            "type": "string",
+            "description": "Cerca un prodotto specifico per nome (es. 'pasta barilla', 'latte')",
+            "editor": "textfield",
+            "default": ""
+        },
+        "maxItems": {
+            "title": "Max prodotti",
+            "type": "integer",
+            "description": "Numero massimo di prodotti da restituire",
+            "default": 2000,
+            "minimum": 1,
+            "maximum": 50000
+        },
+        "proxyConfig": {
+            "title": "Proxy configuration",
+            "type": "object",
+            "description": "Configurazione proxy Apify",
+            "editor": "proxy",
+            "default": {"useApifyProxy": true}
+        }
+    }
+}
