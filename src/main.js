@@ -133,7 +133,7 @@ const crawler = new PlaywrightCrawler({
 
         let items = apiOffers.length > 0
             ? apiOffers
-            : await parseOffersDOM(page, chainName);
+            : await parseOffersText(page, chainName, log);
 
         if (categoria) {
             items = items.filter(i =>
@@ -198,82 +198,56 @@ function extractOffersFromJson(json, chainName) {
     return [];
 }
 
-async function parseOffersDOM(page, chainName) {
-    return page.evaluate((chainName) => {
-        const g = (el, ...sels) => {
-            for (const s of sels) {
-                try { const f = el.querySelector(s); if (f) return f.textContent.trim(); } catch {}
-            }
-            return '';
-        };
+async function parseOffersText(page, chainName, log) {
+    const rawText = await page.evaluate(() => document.body.innerText);
+    log.info(`Raw text length: ${rawText.length}`);
 
-        // Find offer cards
-        let cards = [...document.querySelectorAll(
-            '[class*="offer"], [class*="Offer"], [class*="deal"], [class*="Deal"], ' +
-            '[class*="product"], [class*="Product"], [class*="promo"], [class*="Promo"], ' +
-            'article, [class*="card"]'
-        )].filter(el =>
-            el.textContent.includes('€') &&
-            el.textContent.trim().length > 20 &&
-            el.textContent.trim().length < 3000 &&
-            !el.closest('nav') && !el.closest('header') && !el.closest('footer')
-        );
+    const lines = rawText.split(/[\n\r]+/).map(l => l.trim()).filter(l => l.length > 0);
+    log.info(`Lines: ${lines.length}`);
 
-        // Deduplicate by inner text
-        const seen = new Set();
-        cards = cards.filter(el => {
-            const key = el.textContent.trim().substring(0, 50);
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
+    const priceLineIndices = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (/^\d{1,3}[,.]\d{2}\s*€$/.test(lines[i])) priceLineIndices.push(i);
+    }
+    log.info(`Price lines: ${priceLineIndices.length} | e.g.: ${priceLineIndices.slice(0,3).map(i=>lines[i]).join(', ')}`);
 
-        return cards.slice(0, 300).map(card => {
-            const txt = card.textContent.trim();
+    const NAV_SKIP = new Set(['Home','Anteprima','Discount','Elettronica','Animali','Bricolage',
+        'Salute e Benessere','Ultimi Volantini','Back to School','Iper e Super',
+        'Cura casa e corpo','beta','Sfoglia','Attivo','Scaduto','La tua lista della spesa']);
 
-            const name = g(card,
-                '[class*="title"], [class*="name"], [class*="product-name"], [class*="offer-title"]',
-                'h2', 'h3', 'h4', 'strong'
-            );
-            if (!name || name.length < 2 || name.length > 300) return null;
+    const isFormat = s => /\d+\s*(ml|g|kg|l|lt|pz|cl)/i.test(s) || /^\d+x/i.test(s);
 
-            // Offer price
-            const offerEl = card.querySelector(
-                '[class*="price"], [class*="offer-price"], [class*="sale"], [class*="promo-price"]'
-            );
-            const priceMatch = (offerEl?.textContent || txt).match(/(\d{1,3}[,\.]\d{2})\s*€/);
-            const priceOffer = priceMatch ? priceMatch[1].replace(',', '.') : '';
+    const items = [];
+    const seen = new Set();
 
-            // Original price
-            const origEl = card.querySelector('s, del, [class*="old"], [class*="original"], [class*="was"]');
-            const origMatch = origEl?.textContent.match(/(\d{1,3}[,\.]\d{2})/);
-            const priceOriginal = origMatch ? origMatch[1].replace(',', '.') : '';
+    for (const i of priceLineIndices) {
+        const price = lines[i].replace(/\s*€$/, '').trim().replace(',', '.');
+        const prev1 = i >= 1 ? lines[i - 1] : '';
+        const prev2 = i >= 2 ? lines[i - 2] : '';
 
-            // Discount
-            const discountEl = card.querySelector('[class*="discount"], [class*="percent"], [class*="save"], [class*="badge"]');
-            const discount = discountEl?.textContent.trim() || '';
+        let name, format;
+        if (isFormat(prev1) && prev2 && !NAV_SKIP.has(prev2)) {
+            format = prev1; name = prev2;
+        } else if (prev1 && !NAV_SKIP.has(prev1) && !isFormat(prev1) && !/^\d/.test(prev1) && !/^pag\./.test(prev1)) {
+            name = prev1; format = '';
+        } else continue;
 
-            // Validity
-            const dateEl = card.querySelector('[class*="valid"], [class*="date"], [class*="period"], time');
-            const validity = dateEl?.textContent.trim() || '';
+        // Remove leading emoji
+        name = name.replace(/^[^\w\u00C0-\u024F]+/, '').trim();
+        if (!name || name.length < 3 || seen.has(name)) continue;
+        seen.add(name);
 
-            const img = card.querySelector('img')?.src || '';
-            const link = card.querySelector('a');
-            const url = link?.href || '';
+        let validity = '';
+        for (let j = Math.max(0, i-10); j < Math.min(lines.length, i+3); j++) {
+            if (/\d{2}\/\d{2}\/\d{4}/.test(lines[j])) { validity = lines[j]; break; }
+        }
 
-            return {
-                name,
-                catena: chainName,
-                categoria: g(card, '[class*="category"], [class*="categoria"]'),
-                priceOffer,
-                priceOriginal,
-                discount,
-                validity,
-                img,
-                url,
-            };
-        }).filter(Boolean);
-    }, chainName);
+        items.push({ name, catena: chainName, categoria: '', priceOffer: price,
+            priceOriginal: '', discount: '', validity, img: '', url: '', format: format || '' });
+    }
+
+    log.info(`Parsed ${items.length} offers from text`);
+    return items;
 }
 
 async function dismissCookies(page, log) {
