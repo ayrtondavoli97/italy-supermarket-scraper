@@ -107,7 +107,45 @@ const crawler = new PlaywrightCrawler({
 
         await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
         await dismissCookies(page, log);
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(2000);
+
+        // If this is the index page, find the active flyer and navigate to it
+        const isFlyerIndex = await page.evaluate(() => {
+            return document.body.innerText.includes('Attivo') && document.body.innerText.includes('Sfoglia');
+        });
+
+        if (isFlyerIndex) {
+            log.info('Flyer index page — finding active flyer link...');
+            // Find the first "Sfoglia" link next to "Attivo" badge
+            const flyerUrl = await page.evaluate(() => {
+                const items = [...document.querySelectorAll('a, button')];
+                // Look for link near "Attivo" text
+                const attivo = [...document.querySelectorAll('*')].find(el =>
+                    el.textContent.trim() === 'Attivo' && el.children.length === 0
+                );
+                if (attivo) {
+                    // Walk up and find a link
+                    let parent = attivo.parentElement;
+                    for (let i = 0; i < 5; i++) {
+                        const link = parent?.querySelector('a[href]');
+                        if (link) return link.href;
+                        parent = parent?.parentElement;
+                    }
+                }
+                // Fallback: first link containing "anteprima" or "volantino" in href
+                const link = [...document.querySelectorAll('a[href*="volantino"], a[href*="anteprima"], a[href*="sfoglia"]')]
+                    .find(a => a.textContent.trim().toLowerCase().includes('sfoglia'));
+                return link?.href || null;
+            });
+
+            if (flyerUrl) {
+                log.info(`Navigating to active flyer: ${flyerUrl}`);
+                await page.goto(flyerUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+                await page.waitForTimeout(2000);
+            } else {
+                log.warning('Could not find active flyer link');
+            }
+        }
 
         // Save debug HTML
         if (pageNum === 1 && collected === 0) {
