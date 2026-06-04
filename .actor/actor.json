@@ -2,13 +2,13 @@
     "actorSpecification": 1,
     "name": "italy-supermarket-deals-scraper",
     "title": "Italian Supermarket Flyers & Deals Scraper",
-    "description": "Extracts current promotional products from Italian supermarket flyers. Structured offer extraction currently works for Conad Superstore, Lidl, Eurospin, MD Discount and Aldi, with explicitly marked fallback coverage where available. Returns prices, validity dates, flyer/page references, source quality and extraction timestamp.",
-    "version": "1.2",
+    "description": "Extract current promotional products from Italian grocery flyers. Structured API-quality extraction is validated for Conad Superstore, Lidl, Eurospin, MD Discount and Aldi; Famila and iN's Mercato are included for validation; Esselunga fallback records are optional. Returns prices, numeric price values, validity dates, flyer references and quality metadata.",
+    "version": "1.3",
     "buildTag": "latest",
     "dockerfile": "./Dockerfile",
     "input": "./input_schema.json",
     "defaultRunOptions": {
-        "timeoutSecs": 600,
+        "timeoutSecs": 900,
         "memoryMbytes": 1024
     },
     "storages": {
@@ -19,7 +19,7 @@
                 "overview": {
                     "title": "Current Deals",
                     "transformation": {
-                        "fields": ["name", "catena", "chainSlug", "priceOffer", "priceOriginal", "discount", "format", "validFrom", "validTo", "dataQuality", "flyerId", "pageNumber", "offerId", "img", "sourcePageUrl", "scrapedAt"]
+                        "fields": ["name", "catena", "chainSlug", "priceOfferValue", "currency", "format", "validFrom", "validTo", "dataQuality", "flyerId", "pageNumber", "offerId", "img", "sourcePageUrl", "scrapedAt"]
                     },
                     "display": {
                         "component": "table",
@@ -27,9 +27,8 @@
                             "name": { "label": "Product", "format": "text" },
                             "catena": { "label": "Chain", "format": "text" },
                             "chainSlug": { "label": "Chain slug", "format": "text" },
-                            "priceOffer": { "label": "Offer price €", "format": "text" },
-                            "priceOriginal": { "label": "Original price €", "format": "text" },
-                            "discount": { "label": "Discount", "format": "text" },
+                            "priceOfferValue": { "label": "Offer price", "format": "number" },
+                            "currency": { "label": "Currency", "format": "text" },
                             "format": { "label": "Size / format", "format": "text" },
                             "validFrom": { "label": "Valid from", "format": "text" },
                             "validTo": { "label": "Valid to", "format": "text" },
