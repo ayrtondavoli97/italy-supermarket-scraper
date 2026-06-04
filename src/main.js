@@ -115,35 +115,32 @@ const crawler = new PlaywrightCrawler({
         });
 
         if (isFlyerIndex) {
-            log.info('Flyer index page — finding active flyer link...');
-            // Find the first "Sfoglia" link next to "Attivo" badge
-            const flyerUrl = await page.evaluate(() => {
-                const items = [...document.querySelectorAll('a, button')];
-                // Look for link near "Attivo" text
-                const attivo = [...document.querySelectorAll('*')].find(el =>
-                    el.textContent.trim() === 'Attivo' && el.children.length === 0
-                );
-                if (attivo) {
-                    // Walk up and find a link
-                    let parent = attivo.parentElement;
-                    for (let i = 0; i < 5; i++) {
-                        const link = parent?.querySelector('a[href]');
-                        if (link) return link.href;
-                        parent = parent?.parentElement;
+            log.info('Flyer index page — checking if products already visible...');
+            // Check if products are already on this page (confrontavolantini /chain page has them)
+            const hasProducts = await page.evaluate(() =>
+                /\d+[,.]\d{2}\s*€/.test(document.body.innerText)
+            );
+            if (!hasProducts) {
+                // Need to navigate to actual flyer page
+                const flyerUrl = await page.evaluate(() => {
+                    // Find "Sfoglia" link adjacent to "Attivo" status
+                    const allLinks = [...document.querySelectorAll('a[href]')];
+                    // Look for a link whose surrounding text contains "Attivo"
+                    for (const a of allLinks) {
+                        const parent = a.closest('li, div, article, tr') || a.parentElement;
+                        if (parent && parent.textContent.includes('Attivo') && a.textContent.trim().toLowerCase().includes('sfoglia')) {
+                            return a.href;
+                        }
                     }
+                    return null;
+                });
+                if (flyerUrl) {
+                    log.info(`Navigating to flyer: ${flyerUrl}`);
+                    await page.goto(flyerUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+                    await page.waitForTimeout(2000);
                 }
-                // Fallback: first link containing "anteprima" or "volantino" in href
-                const link = [...document.querySelectorAll('a[href*="volantino"], a[href*="anteprima"], a[href*="sfoglia"]')]
-                    .find(a => a.textContent.trim().toLowerCase().includes('sfoglia'));
-                return link?.href || null;
-            });
-
-            if (flyerUrl) {
-                log.info(`Navigating to active flyer: ${flyerUrl}`);
-                await page.goto(flyerUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-                await page.waitForTimeout(2000);
             } else {
-                log.warning('Could not find active flyer link');
+                log.info('Products already visible on this page, parsing directly');
             }
         }
 
