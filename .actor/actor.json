@@ -1,89 +1,42 @@
 {
-  "actorSpecification": 1,
-  "name": "italy-supermarket-scraper",
-  "title": "Italy Supermarket Scraper \u2014 Esselunga Prices & Products",
-  "description": "Scrape product prices from Esselunga online grocery store. Filter by category or search query. Returns name, price, price/kg, brand, promotions, and more.",
-  "version": "1.0",
-  "buildTag": "latest",
-  "dockerfile": "./Dockerfile",
-  "input": "./input_schema.json",
-  "storages": {
-    "dataset": {
-      "actorSpecification": 1,
-      "title": "Supermarket Products",
-      "views": {
-        "overview": {
-          "title": "Products",
-          "transformation": {
-            "fields": [
-              "supermarket",
-              "categoria",
-              "name",
-              "brand",
-              "weight",
-              "price",
-              "pricePerKg",
-              "oldPrice",
-              "promo",
-              "url",
-              "img"
-            ]
-          },
-          "display": {
-            "component": "table",
-            "properties": {
-              "supermarket": {
-                "label": "Supermercato",
-                "format": "text"
-              },
-              "categoria": {
-                "label": "Categoria",
-                "format": "text"
-              },
-              "name": {
-                "label": "Nome Prodotto",
-                "format": "text"
-              },
-              "brand": {
-                "label": "Marca",
-                "format": "text"
-              },
-              "weight": {
-                "label": "Peso/Quantit\u00e0",
-                "format": "text"
-              },
-              "price": {
-                "label": "Prezzo \u20ac",
-                "format": "text"
-              },
-              "pricePerKg": {
-                "label": "\u20ac/Kg",
-                "format": "text"
-              },
-              "oldPrice": {
-                "label": "Prezzo Originale \u20ac",
-                "format": "text"
-              },
-              "promo": {
-                "label": "Promozione",
-                "format": "text"
-              },
-              "url": {
-                "label": "Link",
-                "format": "link"
-              },
-              "img": {
-                "label": "Immagine",
-                "format": "image"
-              }
+    "actorSpecification": 1,
+    "name": "italy-supermarket-deals-scraper",
+    "title": "Italy Supermarket Deals Scraper — Weekly Offers & Discounts",
+    "description": "Scrapes current weekly deals and promotions from all major Italian supermarkets (Esselunga, Conad, Lidl, Eurospin, Carrefour, Coop, MD, Penny, Aldi, Bennet and more) via VolantinoFacile.it. Returns product name, offer price, original price, discount %, chain, validity dates.",
+    "version": "1.0",
+    "buildTag": "latest",
+    "dockerfile": "./Dockerfile",
+    "input": "./input_schema.json",
+    "defaultRunOptions": {
+        "timeoutSecs": 300,
+        "memoryMbytes": 1024
+    },
+    "storages": {
+        "dataset": {
+            "actorSpecification": 1,
+            "title": "Supermarket Deals",
+            "views": {
+                "overview": {
+                    "title": "Deals",
+                    "transformation": {
+                        "fields": ["name","catena","categoria","priceOffer","priceOriginal","discount","validity","img","url"]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "name":          { "label": "Prodotto",          "format": "text" },
+                            "catena":        { "label": "Catena",            "format": "text" },
+                            "categoria":     { "label": "Categoria",         "format": "text" },
+                            "priceOffer":    { "label": "Prezzo Offerta €",  "format": "text" },
+                            "priceOriginal": { "label": "Prezzo Originale €","format": "text" },
+                            "discount":      { "label": "Sconto",            "format": "text" },
+                            "validity":      { "label": "Validità",          "format": "text" },
+                            "img":           { "label": "Immagine",          "format": "image" },
+                            "url":           { "label": "Link",              "format": "link" }
+                        }
+                    }
+                }
             }
-          }
         }
-      }
     }
-  },
-  "defaultRunOptions": {
-    "timeoutSecs": 600,
-    "memoryMbytes": 1024
-  }
 }
