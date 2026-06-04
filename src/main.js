@@ -12,12 +12,7 @@ const NAV  = `${BASE}/commerce/nav/supermercato`;
 await Actor.init();
 
 const input = await Actor.getInput() ?? {};
-const {
-    categoria = '',
-    query = '',
-    maxItems = 2000,
-    proxyConfig: proxyConfigInput,
-} = input;
+const { categoria = '', query = '', maxItems = 2000, proxyConfig: proxyConfigInput } = input;
 
 const proxyConfiguration = proxyConfigInput
     ? await Actor.createProxyConfiguration(proxyConfigInput)
@@ -36,70 +31,56 @@ const crawler = new PlaywrightCrawler({
     async requestHandler({ page, request, log, addRequests }) {
         const { tipo, slug, catName, page: pageNum = 1 } = request.userData;
 
-        // ── HOMEPAGE: discover categories ────────────────────────────────
+        // ── HOMEPAGE ──────────────────────────────────────────────────────
         if (tipo === 'homepage') {
             log.info('Homepage: discovering categories...');
             await page.goto(`${NAV}/store/home`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
             await page.waitForTimeout(3000);
             await dismissCookies(page, log);
 
-            const html = await page.content();
-            await Actor.setValue('debug_homepage', html, { contentType: 'text/html' });
-
             const cats = await page.evaluate(() => {
+                const seen = new Set();
                 return [...document.querySelectorAll('a[href*="/store/menu/"]')].map(a => {
                     const m = a.href.match(/\/store\/menu\/(\d+)\/(.+)/);
                     return m ? { id: m[1], slug: m[2], text: a.textContent.trim(), href: a.href } : null;
-                }).filter(Boolean);
+                }).filter(c => {
+                    if (!c || seen.has(c.slug)) return false;
+                    seen.add(c.slug);
+                    return true;
+                });
             });
 
-            // Deduplicate by slug
-            const seen = new Set();
-            const unique = cats.filter(c => {
-                if (seen.has(c.slug)) return false;
-                seen.add(c.slug);
-                return true;
-            });
+            log.info(`Found ${cats.length} categories`);
 
-            log.info(`Found ${unique.length} categories`);
-
-            let toQueue = unique;
+            let toQueue = cats;
             if (categoria) {
-                toQueue = unique.filter(c =>
+                toQueue = cats.filter(c =>
                     c.slug.includes(categoria.toLowerCase()) ||
                     c.text.toLowerCase().includes(categoria.toLowerCase())
                 );
-                log.info(`Filtered to ${toQueue.length} matching "${categoria}"`);
             }
 
             await addRequests(toQueue.map(c => ({
                 url: c.href,
-                userData: { tipo: 'categoria', slug: c.slug, catName: c.text, storeId: c.id, page: 1 },
+                userData: { tipo: 'categoria', slug: c.slug, catName: c.text, page: 1 },
             })));
             return;
         }
 
-        // ── CATEGORY or SEARCH page ───────────────────────────────────────
+        // ── CATEGORY / SEARCH ─────────────────────────────────────────────
         log.info(`[${tipo}] ${catName || slug || query} page=${pageNum}`);
         await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await dismissCookies(page, log);
         await page.waitForTimeout(2000);
 
-        // Save debug HTML on very first page
+        // Save debug HTML on very first scrape
         if (pageNum === 1 && collected === 0) {
             const html = await page.content();
             await Actor.setValue(`debug_${slug || 'search'}_p1`, html, { contentType: 'text/html' });
+            log.info(`Debug HTML saved: debug_${slug || 'search'}_p1`);
         }
 
-        // Log body text for selector debugging
-        const bodyTxt = await page.evaluate(() => document.body.innerText.substring(0, 600));
-        log.info(`Body:\n${bodyTxt}`);
-
-        // Try to wait for any item/product element
-        await page.waitForSelector('li, article, [class*="item"], [class*="card"]', { timeout: 10_000 }).catch(() => {});
-
-        const { items, hasNext } = await page.evaluate(() => {
-            // ── helper ──────────────────────────────────────────────────
+        const { items, hasNext, debugInfo } = await page.evaluate(() => {
             const g = (el, ...sels) => {
                 for (const s of sels) {
                     try { const f = el.querySelector(s); if (f) return f.textContent.trim(); } catch {}
@@ -107,149 +88,122 @@ const crawler = new PlaywrightCrawler({
                 return '';
             };
 
-            // ── Find product cards ───────────────────────────────────────
-            // Esselunga uses <li> or <article> with product data inside
-            // Strategy: find all elements that have both a price AND a product name pattern
-            let cards = [];
+            // ── Find the main content area (exclude nav/header/footer) ───
+            const main = document.querySelector('main, [role="main"], #main-content, [class*="main-content"], [class*="MainContent"]')
+                || document.body;
 
-            // Try specific selectors first
+            // ── Try specific product card selectors ───────────────────────
+            let cards = [];
             const specificSels = [
-                'li[class*="product"]', 'li[class*="item"]', 'article[class*="product"]',
-                '[class*="productCard"]', '[class*="product-card"]', '[class*="ProductCard"]',
-                '[class*="item-card"]', '[class*="ItemCard"]', '[class*="grocery-item"]',
+                'li[class*="product"]', 'li[class*="Product"]',
+                'article[class*="product"]', 'article[class*="Product"]',
+                '[class*="productCard"]', '[class*="ProductCard"]',
+                '[class*="product-card"]', '[class*="product-item"]',
+                '[class*="grocery-item"]', '[class*="GroceryItem"]',
+                '[class*="catalog-item"]', '[class*="CatalogItem"]',
+                '[data-testid*="product"]', '[data-product]',
             ];
+
             for (const sel of specificSels) {
                 try {
-                    const found = [...document.querySelectorAll(sel)];
-                    if (found.length > 0) { cards = found; break; }
+                    const found = [...main.querySelectorAll(sel)];
+                    if (found.length > 2) { cards = found; break; }
                 } catch {}
             }
 
-            // Fallback: li elements that contain price-like text (€)
+            // ── Fallback: li/article with € but NOT inside nav/menu ───────
             if (cards.length === 0) {
-                cards = [...document.querySelectorAll('li, article')].filter(el => {
-                    const txt = el.textContent;
-                    return txt.includes('€') && txt.trim().length > 20 && txt.trim().length < 2000;
+                // Exclude navigation containers
+                const navSels = ['nav', 'header', 'footer', '[class*="nav"]', '[class*="Nav"]',
+                    '[class*="menu"]', '[class*="Menu"]', '[class*="sidebar"]', '[class*="Sidebar"]',
+                    '[class*="breadcrumb"]', '[role="navigation"]'];
+
+                const allItems = [...document.querySelectorAll('li, article')];
+                cards = allItems.filter(el => {
+                    // Must contain €
+                    if (!el.textContent.includes('€')) return false;
+                    // Text length sanity check
+                    const len = el.textContent.trim().length;
+                    if (len < 10 || len > 3000) return false;
+                    // Must NOT be inside nav/menu/header/footer
+                    for (const navSel of navSels) {
+                        try { if (el.closest(navSel)) return false; } catch {}
+                    }
+                    return true;
                 });
             }
 
-            const items = cards.map(card => {
-                const txt = card.textContent;
+            // Debug info
+            const debugInfo = {
+                mainTag: main.tagName,
+                mainClass: main.className?.substring(0, 100),
+                cardsFound: cards.length,
+                firstCardHTML: cards[0]?.outerHTML?.substring(0, 300) || '',
+            };
 
-                // Name: first meaningful text node or heading
+            // ── Parse cards ───────────────────────────────────────────────
+            const items = cards.map(card => {
                 const name = g(card,
                     '[class*="name"]', '[class*="Name"]', '[class*="title"]', '[class*="Title"]',
                     '[class*="denomination"]', '[class*="description"]',
-                    'h2', 'h3', 'h4', 'h5', 'p[class*="name"]'
-                ) || card.querySelector('a')?.textContent.trim() || '';
+                    'h2', 'h3', 'h4', 'h5'
+                );
+                if (!name || name.length < 2 || name.length > 300) return null;
 
-                if (!name || name.length < 2 || name.length > 200) return null;
+                // Price via regex on full text
+                const txt = card.textContent;
+                const priceMatch = txt.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*€|€\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/);
+                const price = priceMatch
+                    ? (priceMatch[1] || priceMatch[2]).replace(',', '.')
+                    : '';
 
-                // Price: look for € pattern
-                const priceMatch = txt.match(/(\d+[,\.]\d{2})\s*€|€\s*(\d+[,\.]\d{2})/);
-                const price = priceMatch ? (priceMatch[1] || priceMatch[2]).replace(',', '.') : '';
-
-                // Price per kg
-                const unitMatch = txt.match(/(\d+[,\.]\d+)\s*€\s*\/\s*(kg|l|lt|pz)/i);
-                const pricePerUnit = unitMatch ? `${unitMatch[1]}€/${unitMatch[2]}` : '';
-
-                // Old price (strikethrough)
-                const oldEl = card.querySelector('s, del, [class*="old"], [class*="strike"], [class*="original"]');
+                const oldEl = card.querySelector('s, del, [class*="old"], [class*="strike"], [class*="original"], [class*="barred"]');
                 const oldPriceMatch = oldEl?.textContent.match(/(\d+[,\.]\d{2})/);
                 const oldPrice = oldPriceMatch ? oldPriceMatch[1].replace(',', '.') : '';
 
-                // Brand
+                const unitMatch = txt.match(/(\d+[,\.]\d+)\s*€\s*\/\s*(kg|l|lt|g|ml|pz)/i);
+                const pricePerUnit = unitMatch ? `${unitMatch[1].replace(',', '.')}€/${unitMatch[2]}` : '';
+
                 const brand = g(card, '[class*="brand"]', '[class*="Brand"]', '[class*="manufacturer"]');
+                const weight = g(card, '[class*="weight"]', '[class*="Weight"]', '[class*="format"]', '[class*="size"]', '[class*="quantity"]');
+                const promo = g(card, '[class*="badge"]', '[class*="Badge"]', '[class*="promo"]', '[class*="offer"]', '[class*="discount"]', '[class*="tag"]');
 
-                // Weight/format
-                const weight = g(card, '[class*="weight"]', '[class*="format"]', '[class*="quantity"]', '[class*="size"]');
-
-                // Promo badge
-                const badge = g(card, '[class*="badge"]', '[class*="promo"]', '[class*="offer"]', '[class*="discount"]', '[class*="tag"]');
-
-                // Image
                 const img = card.querySelector('img')?.src || card.querySelector('img')?.dataset?.src || '';
-
-                // Link
                 const link = card.querySelector('a[href*="/store/"]') || card.querySelector('a');
                 const url = link?.href || '';
 
-                return { name, price, oldPrice, pricePerUnit, brand, weight, promo: badge, img, url };
+                return { name, price, oldPrice, pricePerUnit, brand, weight, promo, img, url };
             }).filter(Boolean);
 
-            // ── Next page ────────────────────────────────────────────────
-            // Esselunga uses scroll/infinite scroll OR next button
-            // Look for pagination buttons without :has-text (not valid in querySelector)
-            let hasNext = false;
-            const allBtns = [...document.querySelectorAll('button, a')];
-            const nextBtn = allBtns.find(el => {
+            // ── Next page ─────────────────────────────────────────────────
+            const hasNext = !!([...document.querySelectorAll('button, a')].find(el => {
                 const t = el.textContent.trim().toLowerCase();
-                return (t === '>' || t === '›' || t === 'successiva' || t === 'next' || t === 'avanti') &&
+                return (t === '>' || t === '›' || t === 'successiva' || t === 'next') &&
                     !el.disabled && !el.hasAttribute('disabled');
-            });
-            if (nextBtn) hasNext = true;
+            }));
 
-            // Also check for "load more" button
-            const loadMore = allBtns.find(el => {
-                const t = el.textContent.trim().toLowerCase();
-                return t.includes('carica altri') || t.includes('mostra altri') || t.includes('load more');
-            });
-            if (loadMore) hasNext = true;
-
-            return { items, hasNext };
+            return { items, hasNext, debugInfo };
         });
 
         log.info(`${slug} page=${pageNum}: ${items.length} products | hasNext=${hasNext}`);
+        log.info(`Debug: main=${debugInfo.mainTag}.${debugInfo.mainClass} | cards=${debugInfo.cardsFound}`);
+        if (debugInfo.firstCardHTML) log.info(`First card HTML: ${debugInfo.firstCardHTML}`);
 
         for (const item of items) {
             if (collected >= maxItems) break;
-            await Actor.pushData({
-                ...item,
-                supermarket: 'Esselunga',
-                categoria: catName || slug || '',
-            });
+            await Actor.pushData({ ...item, supermarket: 'Esselunga', categoria: catName || slug || '' });
             collected++;
         }
 
-        // Next page
         if (hasNext && collected < maxItems) {
-            // Try clicking next button via Playwright
-            try {
-                const nextClicked = await page.evaluate(() => {
-                    const btn = [...document.querySelectorAll('button, a')].find(el => {
-                        const t = el.textContent.trim().toLowerCase();
-                        return t === '>' || t === '›' || t === 'successiva' || t.includes('carica altri');
-                    });
-                    if (btn) { btn.click(); return true; }
-                    return false;
-                });
-                if (nextClicked) {
-                    await page.waitForTimeout(3000);
-                    // Re-scrape after click (inline pagination)
-                    const moreItems = await page.evaluate(() => {
-                        // same logic as above but abbreviated
-                        return [...document.querySelectorAll('li, article')].filter(el =>
-                            el.textContent.includes('€') && el.textContent.trim().length > 20
-                        ).length;
-                    });
-                    log.info(`After next click: ${moreItems} items in DOM`);
-                }
-            } catch { /* ignore */ }
-
-            // Queue next URL for scroll-type pagination
             const nextUrl = new URL(request.url);
             const cur = parseInt(nextUrl.searchParams.get('page') || '1');
             nextUrl.searchParams.set('page', cur + 1);
-            await addRequests([{
-                url: nextUrl.toString(),
-                userData: { ...request.userData, page: cur + 1 },
-            }]);
+            await addRequests([{ url: nextUrl.toString(), userData: { ...request.userData, page: cur + 1 } }]);
         }
     },
 
-    failedRequestHandler({ request, log }) {
-        log.error(`Failed: ${request.url}`);
-    },
+    failedRequestHandler({ request, log }) { log.error(`Failed: ${request.url}`); },
 });
 
 const startRequests = query
@@ -260,12 +214,9 @@ await crawler.run(startRequests);
 console.log(`Done. Total saved: ${collected} products.`);
 await Actor.exit();
 
-// ── Cookie dismiss (Playwright API, outside page.evaluate) ───────────────────
 async function dismissCookies(page, log) {
-    const texts = ['Accetta tutti', 'Accetta', 'Chiudi', 'OK', 'Got it'];
-    for (const text of texts) {
+    for (const text of ['Accetta tutti', 'Accetta', 'Chiudi', 'OK']) {
         try {
-            // Use Playwright locator (not querySelector) so :has-text works
             const btn = page.locator(`button:has-text("${text}")`).first();
             if (await btn.isVisible({ timeout: 1500 })) {
                 await btn.click();
@@ -275,9 +226,4 @@ async function dismissCookies(page, log) {
             }
         } catch { /* ignore */ }
     }
-    // Fallback: onetrust
-    try {
-        const ot = page.locator('#onetrust-accept-btn-handler').first();
-        if (await ot.isVisible({ timeout: 1500 })) { await ot.click(); }
-    } catch { /* ignore */ }
 }
