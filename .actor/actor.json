@@ -1,0 +1,40 @@
+{
+    "actorSpecification": 1,
+    "name": "italy-supermarket-scraper",
+    "title": "Italy Supermarket Scraper — Esselunga Prices & Products",
+    "description": "Scrape product prices from Esselunga online grocery store. Filter by category or search query. Returns name, price, price/kg, brand, promotions, and more.",
+    "version": "1.0",
+    "buildTag": "latest",
+    "dockerfile": "./Dockerfile",
+    "input": "./input_schema.json",
+    "storages": {
+        "dataset": {
+            "actorSpecification": 1,
+            "title": "Supermarket Products",
+            "views": {
+                "overview": {
+                    "title": "Products",
+                    "transformation": {
+                        "fields": ["supermarket","categoria","name","brand","weight","price","pricePerKg","oldPrice","promo","url","img"]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "supermarket": {"label": "Supermercato", "format": "text"},
+                            "categoria": {"label": "Categoria", "format": "text"},
+                            "name": {"label": "Nome Prodotto", "format": "text"},
+                            "brand": {"label": "Marca", "format": "text"},
+                            "weight": {"label": "Peso/Quantità", "format": "text"},
+                            "price": {"label": "Prezzo €", "format": "text"},
+                            "pricePerKg": {"label": "€/Kg", "format": "text"},
+                            "oldPrice": {"label": "Prezzo Originale €", "format": "text"},
+                            "promo": {"label": "Promozione", "format": "text"},
+                            "url": {"label": "Link", "format": "link"},
+                            "img": {"label": "Immagine", "format": "image"}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
