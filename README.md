@@ -1,4 +1,4 @@
-# Italian Supermarket Flyers & Deals Scraper
+# Italy Grocery Deals & Weekly Ads Scraper
 
 Apify Actor for extracting current promotional offers from Italian grocery flyers into a structured dataset suitable for comparison, price monitoring and downstream analytics.
 
