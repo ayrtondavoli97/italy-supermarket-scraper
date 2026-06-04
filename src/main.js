@@ -13,20 +13,36 @@ import { PlaywrightCrawler } from 'crawlee';
 
 const SOURCES = {
     'lidl': {
-        url: 'https://www.lidl.it/it/offerte',
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-lidl',
         name: 'Lidl',
     },
     'eurospin': {
-        url: 'https://www.eurospin.it/offerte/',
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-eurospin',
         name: 'Eurospin',
     },
+    'conad': {
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-conad',
+        name: 'Conad',
+    },
     'penny': {
-        url: 'https://www.penny.it/offerte',
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-penny',
         name: 'Penny Market',
     },
     'md': {
-        url: 'https://www.mdsupermercati.it/volantino/',
-        name: 'MD Supermercati',
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-md-discount',
+        name: 'MD Discount',
+    },
+    'aldi': {
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-aldi',
+        name: 'Aldi',
+    },
+    'coop': {
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-coop',
+        name: 'Coop',
+    },
+    'carrefour': {
+        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-carrefour',
+        name: 'Carrefour',
     },
 };
 
