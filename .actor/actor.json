@@ -7,6 +7,7 @@
     "buildTag": "latest",
     "dockerfile": "./Dockerfile",
     "input": "./input_schema.json",
+    "output": "./output_schema.json",
     "defaultRunOptions": {
         "timeoutSecs": 900,
         "memoryMbytes": 1024
@@ -15,9 +16,42 @@
         "dataset": {
             "actorSpecification": 1,
             "title": "Italian Supermarket Promotional Offers",
+            "fields": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "title": "Product name", "description": "Promotional product name as returned by the flyer source.", "example": "NUTELLA FERRERO 750 g" },
+                    "catena": { "type": "string", "title": "Chain name", "description": "Retail chain or banner returned by the source. The Famila source may return Famila or Iperfamila.", "example": "Conad Superstore" },
+                    "chainSlug": { "type": "string", "title": "Chain slug", "description": "Stable Actor source identifier.", "example": "conad" },
+                    "categoria": { "type": "string", "title": "Source category", "description": "Category only when provided by the source; it may be empty." },
+                    "priceOffer": { "type": "string", "title": "Offer price text", "description": "Promotional price normalized as source-compatible decimal text.", "example": "4.79" },
+                    "priceOfferValue": { "type": "number", "title": "Offer price", "description": "Numeric promotional price suitable for filtering and analytics.", "example": 4.79 },
+                    "priceOriginal": { "type": "string", "title": "Original price text", "description": "Original price where provided by the source; it may be empty." },
+                    "priceOriginalValue": { "type": ["number", "null"], "title": "Original price", "description": "Numeric original price where provided by the source; otherwise null." },
+                    "currency": { "type": "string", "title": "Currency", "description": "ISO 4217 currency code.", "enum": ["EUR"], "example": "EUR" },
+                    "country": { "type": "string", "title": "Country", "description": "ISO country code for the monitored market.", "enum": ["IT"], "example": "IT" },
+                    "discount": { "type": "string", "title": "Discount", "description": "Discount only when supplied by the source; it may be empty." },
+                    "format": { "type": "string", "title": "Size or format", "description": "Packaging, weight or quantity where supplied by the source.", "example": "750 g" },
+                    "validFrom": { "type": "string", "title": "Valid from", "description": "Offer flyer validity start date in YYYY-MM-DD format when detectable.", "example": "2026-06-04" },
+                    "validTo": { "type": "string", "title": "Valid to", "description": "Offer flyer validity end date in YYYY-MM-DD format when detectable.", "example": "2026-06-13" },
+                    "validity": { "type": "string", "title": "Validity range", "description": "Readable offer validity interval when dates are detectable.", "example": "2026-06-04 – 2026-06-13" },
+                    "flyerId": { "type": ["number", "string"], "title": "Flyer ID", "description": "Source flyer identifier.", "example": 2873 },
+                    "pageNumber": { "type": ["number", "string"], "title": "Flyer page", "description": "Page number containing the promotional product.", "example": 1 },
+                    "offerId": { "type": ["number", "string"], "title": "Offer ID", "description": "Source offer identifier for structured records." },
+                    "img": { "type": "string", "title": "Flyer image URL", "description": "Flyer page or product image URL when supplied by the source." },
+                    "sourcePageUrl": { "type": "string", "title": "Source page URL", "description": "Public flyer listing page used for this chain." },
+                    "offersApiUrl": { "type": "string", "title": "Offers API URL", "description": "Structured endpoint used to extract this record when dataQuality is structured_api." },
+                    "extractionSource": { "type": "string", "title": "Extraction source", "description": "Extraction method used for the record.", "enum": ["offers_api", "preview_text"] },
+                    "dataQuality": { "type": "string", "title": "Data quality", "description": "Quality marker for downstream consumers.", "enum": ["structured_api", "preview_fallback"], "example": "structured_api" },
+                    "offerKey": { "type": "string", "title": "Offer key", "description": "Stable key for deduplicating the current promotional offer." },
+                    "productFingerprint": { "type": "string", "title": "Product fingerprint", "description": "Matching helper for comparing similar products across runs." },
+                    "scrapedAt": { "type": "string", "title": "Scraped at", "description": "ISO timestamp for the Actor run.", "example": "2026-06-04T19:54:24.533Z" }
+                }
+            },
             "views": {
                 "overview": {
                     "title": "Current Deals",
+                    "description": "Structured promotional deals with core analytical and provenance fields.",
                     "transformation": {
                         "fields": ["name", "catena", "chainSlug", "priceOfferValue", "currency", "format", "validFrom", "validTo", "dataQuality", "flyerId", "pageNumber", "offerId", "img", "sourcePageUrl", "scrapedAt"]
                     },
@@ -30,15 +64,15 @@
                             "priceOfferValue": { "label": "Offer price", "format": "number" },
                             "currency": { "label": "Currency", "format": "text" },
                             "format": { "label": "Size / format", "format": "text" },
-                            "validFrom": { "label": "Valid from", "format": "text" },
-                            "validTo": { "label": "Valid to", "format": "text" },
+                            "validFrom": { "label": "Valid from", "format": "date" },
+                            "validTo": { "label": "Valid to", "format": "date" },
                             "dataQuality": { "label": "Data quality", "format": "text" },
-                            "flyerId": { "label": "Flyer ID", "format": "text" },
-                            "pageNumber": { "label": "Page", "format": "text" },
+                            "flyerId": { "label": "Flyer ID", "format": "number" },
+                            "pageNumber": { "label": "Page", "format": "number" },
                             "offerId": { "label": "Offer ID", "format": "text" },
                             "img": { "label": "Flyer image", "format": "image" },
                             "sourcePageUrl": { "label": "Source page", "format": "link" },
-                            "scrapedAt": { "label": "Scraped at", "format": "text" }
+                            "scrapedAt": { "label": "Scraped at", "format": "date" }
                         }
                     }
                 }
