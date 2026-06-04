@@ -9,30 +9,8 @@
       "type": "string",
       "description": "Select one chain, or all currently monitored chains.",
       "editor": "select",
-      "enum": [
-        "tutti",
-        "lidl",
-        "eurospin",
-        "md",
-        "aldi",
-        "esselunga",
-        "conad",
-        "penny",
-        "coop",
-        "carrefour"
-      ],
-      "enumTitles": [
-        "All monitored chains",
-        "Lidl",
-        "Eurospin",
-        "MD Discount",
-        "Aldi",
-        "Esselunga (fallback availability may vary)",
-        "Conad (coverage under development)",
-        "Penny Market (coverage under development)",
-        "Coop (coverage under development)",
-        "Carrefour (coverage under development)"
-      ],
+      "enum": ["tutti", "lidl", "eurospin", "md", "aldi", "esselunga", "conad", "penny", "coop", "carrefour"],
+      "enumTitles": ["All monitored chains", "Lidl", "Eurospin", "MD Discount", "Aldi", "Esselunga (fallback availability may vary)", "Conad (coverage under development)", "Penny Market (coverage under development)", "Coop (coverage under development)", "Carrefour (coverage under development)"],
       "default": "tutti"
     },
     "categoria": {
@@ -53,7 +31,13 @@
     "diagnosticMode": {
       "title": "Save API diagnostics",
       "type": "boolean",
-      "description": "Stores technical API response diagnostics in the key-value store. Use for development only.",
+      "description": "Stores API response diagnostics for structured flyers. Use for development only.",
+      "default": false
+    },
+    "investigateZeroResults": {
+      "title": "Investigate chains without structured products",
+      "type": "boolean",
+      "description": "Development mode: only for chains returning zero API products, saves page HTML, screenshot, DOM audit and click/network probes to identify alternative flyer structures. Does not change extracted output.",
       "default": false
     },
     "proxyConfig": {
@@ -61,9 +45,7 @@
       "type": "object",
       "description": "Optional Apify Proxy configuration.",
       "editor": "proxy",
-      "default": {
-        "useApifyProxy": true
-      }
+      "default": { "useApifyProxy": true }
     }
   }
 }
