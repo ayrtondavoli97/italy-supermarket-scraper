@@ -1,32 +1,54 @@
 {
   "title": "Italian Supermarket Flyers & Deals Scraper",
-  "description": "Extract current promotional products from Italian supermarket flyers. Structured products are available for supported chains; fallback results are explicitly marked.",
+  "description": "Extract current promotional products from Italian supermarket flyers. Structured API records are returned by default; lower-quality preview fallback data can be optionally included.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "catena": {
       "title": "Supermarket chain",
       "type": "string",
-      "description": "Select one chain, or all currently monitored chains.",
+      "description": "Select one chain or scrape all supported and candidate grocery chains.",
       "editor": "select",
-      "enum": ["tutti", "lidl", "eurospin", "md", "aldi", "conad", "esselunga", "penny", "coop", "carrefour"],
-      "enumTitles": ["All monitored chains", "Lidl", "Eurospin", "MD Discount", "Aldi", "Conad Superstore", "Esselunga (fallback availability may vary)", "Penny Market (coverage under development)", "Coop (coverage under development)", "Carrefour (coverage under development)"],
+      "enum": ["tutti", "conad", "lidl", "eurospin", "md", "aldi", "famila", "ins", "esselunga"],
+      "enumTitles": ["All grocery chains", "Conad Superstore", "Lidl", "Eurospin", "MD Discount", "Aldi", "Famila (validation pending)", "iN's Mercato (validation pending)", "Esselunga (preview fallback only when available)"],
       "default": "tutti"
     },
-    "categoria": {
-      "title": "Product search / category filter (optional)",
+    "keyword": {
+      "title": "Product keyword filter (optional)",
       "type": "string",
-      "description": "Return only records whose product name or category contains this term, for example: pasta, birra, acqua.",
+      "description": "Return only products whose name or source category contains the term, for example: pasta, birra, latte, detersivo.",
       "editor": "textfield",
       "default": ""
     },
+    "structuredOnly": {
+      "title": "Return only structured API-quality records",
+      "type": "boolean",
+      "description": "Recommended. Excludes preview-only fallback records, such as currently available Esselunga preview items, from the output dataset.",
+      "default": true
+    },
     "maxItems": {
-      "title": "Maximum number of products",
+      "title": "Maximum products for a single selected chain",
       "type": "integer",
-      "description": "Maximum output records. The Actor returns fewer records when fewer current structured offers are available.",
+      "description": "Used only when you select a single supermarket chain.",
       "default": 1000,
       "minimum": 1,
       "maximum": 10000
+    },
+    "maxItemsPerChain": {
+      "title": "Maximum products per chain when scraping all",
+      "type": "integer",
+      "description": "Used when Supermarket chain is set to All grocery chains. Prevents large chains from consuming the whole output before smaller chains are processed.",
+      "default": 1000,
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "maxTotalItems": {
+      "title": "Maximum total products when scraping all",
+      "type": "integer",
+      "description": "Safety ceiling for an all-chains run. Keep this greater than the expected sum of products across chains for full coverage.",
+      "default": 10000,
+      "minimum": 1,
+      "maximum": 50000
     },
     "diagnosticMode": {
       "title": "Save API diagnostics",
@@ -37,7 +59,7 @@
     "investigateZeroResults": {
       "title": "Investigate chains without structured products",
       "type": "boolean",
-      "description": "Development mode: only for chains returning zero API products, saves page HTML, screenshot, DOM audit and click/network probes to identify alternative flyer structures. Does not change extracted output.",
+      "description": "Development mode: for chains returning zero API products, saves page HTML, screenshot, DOM audit and click probes. Does not change extracted output.",
       "default": false
     },
     "proxyConfig": {
