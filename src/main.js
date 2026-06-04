@@ -70,7 +70,7 @@ const crawler = new PlaywrightCrawler({
     ],
 
     async requestHandler({ page, request, log, addRequests }) {
-        const { chain, chainName, page: pageNum = 1 } = request.userData;
+        const { chain, chainName, page: pageNum = 1, isFlyerPage = false } = request.userData;
         log.info(`${chainName} page=${pageNum} | ${request.url}`);
 
         // Intercept API responses
