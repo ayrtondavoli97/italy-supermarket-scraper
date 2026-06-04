@@ -7,10 +7,10 @@
     "catena": {
       "title": "Supermarket chain",
       "type": "string",
-      "description": "Select one chain or scrape all supported and candidate grocery chains.",
+      "description": "Select one chain or scrape all supported grocery chains.",
       "editor": "select",
       "enum": ["tutti", "conad", "lidl", "eurospin", "md", "aldi", "famila", "ins", "esselunga"],
-      "enumTitles": ["All grocery chains", "Conad Superstore", "Lidl", "Eurospin", "MD Discount", "Aldi", "Famila (validation pending)", "iN's Mercato (validation pending)", "Esselunga (preview fallback only when available)"],
+      "enumTitles": ["All grocery chains", "Conad Superstore", "Lidl", "Eurospin", "MD Discount", "Aldi", "Famila / Iperfamila", "iN's Mercato", "Esselunga (preview fallback only when available)"],
       "default": "tutti"
     },
     "keyword": {
@@ -30,15 +30,15 @@
       "title": "Maximum products for a single selected chain",
       "type": "integer",
       "description": "Used only when you select a single supermarket chain.",
-      "default": 1000,
+      "default": 2000,
       "minimum": 1,
       "maximum": 10000
     },
     "maxItemsPerChain": {
       "title": "Maximum products per chain when scraping all",
       "type": "integer",
-      "description": "Used when Supermarket chain is set to All grocery chains. Prevents large chains from consuming the whole output before smaller chains are processed.",
-      "default": 1000,
+      "description": "Used for All grocery chains. The default is above the currently validated Famila catalogue size, so large chains are not silently cut while each chain still has its own safety cap.",
+      "default": 2000,
       "minimum": 1,
       "maximum": 10000
     },
