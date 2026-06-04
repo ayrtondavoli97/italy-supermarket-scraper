@@ -126,7 +126,10 @@ async function collectFlyers(page, sourceUrl) {
         const dateMatch = (card?.innerText || '').match(/(\d{2}\/\d{2}\/\d{4})\s*[–-]\s*(\d{2}\/\d{2}\/\d{4})/);
         return { index, flyerId: idMatch ? Number(idMatch[1]) : null, coverImage: imgSrc, validFromRaw: dateMatch?.[1] || '', validToRaw: dateMatch?.[2] || '' };
     }).filter((flyer) => flyer.flyerId));
-    return flyers.map((flyer) => ({ ...flyer, validFrom: toIsoDate(flyer.validFromRaw), validTo: toIsoDate(flyer.validToRaw), coverImage: absoluteUrl(flyer.coverImage, sourceUrl), sourcePageUrl: sourceUrl }));
+    return flyers.map((flyer) => {
+        const dateRange = normalizeDateRange(flyer.validFromRaw, flyer.validToRaw);
+        return { ...flyer, ...dateRange, coverImage: absoluteUrl(flyer.coverImage, sourceUrl), sourcePageUrl: sourceUrl };
+    });
 }
 
 async function requestFlyerPages(page, chain, chainName, flyer, limit, log, diagnostics) {
@@ -210,7 +213,32 @@ async function previewFallback(page, chain, chainName, sourceUrl, scrapedAt, log
     return uniqueProducts(products);
 }
 
-function toIsoDate(value) { const match = String(value || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return match ? `${match[3]}-${match[2]}-${match[1]}` : ''; }
+function normalizeDateRange(fromRaw, toRaw) {
+    const formats = ['DMY', 'MDY'];
+    for (const format of formats) {
+        const validFrom = toIsoDate(fromRaw, format);
+        const validTo = toIsoDate(toRaw, format);
+        if (!validFrom || !validTo) continue;
+        const start = Date.parse(validFrom);
+        const end = Date.parse(validTo);
+        const days = (end - start) / 86_400_000;
+        if (days >= 0 && days <= 90) return { validFrom, validTo };
+    }
+    return { validFrom: '', validTo: '' };
+}
+function toIsoDate(value, format) {
+    const match = String(value || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!match) return '';
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const year = Number(match[3]);
+    const month = format === 'DMY' ? second : first;
+    const day = format === 'DMY' ? first : second;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return '';
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return '';
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
 function buildValidity(from, to) { return from && to ? `${from} – ${to}` : ''; }
 function absoluteUrl(value, baseUrl) { if (!value) return ''; try { return new URL(value, baseUrl).href; } catch { return String(value); } }
 function normalizePrice(value) { return String(value ?? '').replace(/€/g, '').trim().replace(',', '.'); }
