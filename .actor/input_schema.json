@@ -6,16 +6,16 @@
         "catena": {
             "title": "Catena supermercato",
             "type": "string",
-            "description": "Seleziona la catena da scrapare. 'tutti' per tutte le catene.",
+            "description": "Seleziona la catena. 'tutti' per tutte le catene supportate.",
             "editor": "select",
-            "enum": ["tutti","esselunga","conad","coop","lidl","eurospin","carrefour","penny","md","aldi","bennet","iper","pam","despar","famila"],
-            "enumTitles": ["Tutte le catene","Esselunga","Conad","Coop","Lidl","Eurospin","Carrefour","Penny Market","MD Discount","Aldi","Bennet","Iper","Pam","Despar","Famila"],
-            "default": "tutti"
+            "enum": ["tutti", "lidl", "eurospin", "penny", "md"],
+            "enumTitles": ["Tutte (Lidl + Eurospin + Penny + MD)", "Lidl", "Eurospin", "Penny Market", "MD Supermercati"],
+            "default": "lidl"
         },
         "categoria": {
-            "title": "Categoria prodotto (opzionale)",
+            "title": "Categoria / parola chiave (opzionale)",
             "type": "string",
-            "description": "Filtra per categoria (es. 'pasta', 'bevande', 'carne')",
+            "description": "Filtra per categoria o parola chiave (es. 'pasta', 'carne', 'bevande')",
             "editor": "textfield",
             "default": ""
         },
@@ -23,9 +23,9 @@
             "title": "Max offerte",
             "type": "integer",
             "description": "Numero massimo di offerte da restituire",
-            "default": 500,
+            "default": 200,
             "minimum": 1,
-            "maximum": 10000
+            "maximum": 5000
         },
         "proxyConfig": {
             "title": "Proxy configuration",
