@@ -8,15 +8,17 @@ The Actor automatically detects active flyers and extracts products from structu
 
 | Chain | Current extraction quality |
 | --- | --- |
+| Conad Superstore | Structured API offers |
 | Lidl | Structured API offers |
 | Eurospin | Structured API offers |
 | MD Discount | Structured API offers |
 | Aldi | Structured API offers |
 | Esselunga | Preview fallback where visible products are available |
-| Conad | Monitored; structured coverage under development |
 | Penny Market | Monitored; structured coverage under development |
 | Coop | Monitored; structured coverage under development |
 | Carrefour | Monitored; structured coverage under development |
+
+Confirmed production validation on 2026-06-04 returned 360 structured current offers from one active Conad Superstore flyer, in addition to established structured extraction from Lidl, Eurospin, MD Discount and Aldi.
 
 Coverage can change when active flyers or source-site data availability change.
 
@@ -51,7 +53,8 @@ Each dataset record can include:
   "catena": "tutti",
   "categoria": "",
   "maxItems": 5000,
-  "diagnosticMode": false
+  "diagnosticMode": false,
+  "investigateZeroResults": false
 }
 ```
 
