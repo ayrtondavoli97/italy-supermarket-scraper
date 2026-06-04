@@ -12,38 +12,15 @@ import { Actor } from 'apify';
 import { PlaywrightCrawler } from 'crawlee';
 
 const SOURCES = {
-    'lidl': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-lidl',
-        name: 'Lidl',
-    },
-    'eurospin': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-eurospin',
-        name: 'Eurospin',
-    },
-    'conad': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-conad',
-        name: 'Conad',
-    },
-    'penny': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-penny',
-        name: 'Penny Market',
-    },
-    'md': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-md-discount',
-        name: 'MD Discount',
-    },
-    'aldi': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-aldi',
-        name: 'Aldi',
-    },
-    'coop': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-coop',
-        name: 'Coop',
-    },
-    'carrefour': {
-        url: 'https://confrontavolantini.com/anteprima/anteprima-nuovo-volantino-carrefour',
-        name: 'Carrefour',
-    },
+    'lidl':      { url: 'https://confrontavolantini.com/lidl',      name: 'Lidl' },
+    'eurospin':  { url: 'https://confrontavolantini.com/eurospin',  name: 'Eurospin' },
+    'conad':     { url: 'https://confrontavolantini.com/conad',     name: 'Conad' },
+    'penny':     { url: 'https://confrontavolantini.com/penny',     name: 'Penny Market' },
+    'md':        { url: 'https://confrontavolantini.com/md',        name: 'MD Discount' },
+    'aldi':      { url: 'https://confrontavolantini.com/aldi',      name: 'Aldi' },
+    'coop':      { url: 'https://confrontavolantini.com/coop',      name: 'Coop' },
+    'carrefour': { url: 'https://confrontavolantini.com/carrefour', name: 'Carrefour' },
+    'esselunga': { url: 'https://confrontavolantini.com/esselunga', name: 'Esselunga' },
 };
 
 await Actor.init();
