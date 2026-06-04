@@ -1,0 +1,20 @@
+{
+  "$schema": "https://apify-projects.github.io/actor-json-schemas/output.json?v=0.3",
+  "actorOutputSchemaVersion": 1,
+  "title": "Output schema of Italian Supermarket Flyers & Deals Scraper",
+  "description": "Outputs include the extracted promotional deals dataset and a structured summary of coverage, quality mode and per-chain extraction results.",
+  "properties": {
+    "deals": {
+      "type": "string",
+      "title": "Promotional deals",
+      "description": "Structured current promotional products extracted from Italian grocery flyers. Use the dataset view for table display or retrieve all items via API.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items?view=overview"
+    },
+    "runSummary": {
+      "type": "string",
+      "title": "Run summary",
+      "description": "JSON summary containing total output count, quality mode, per-chain coverage, extraction status and limit configuration.",
+      "template": "{{links.apiDefaultKeyValueStoreUrl}}/records/RUN_SUMMARY"
+    }
+  }
+}
