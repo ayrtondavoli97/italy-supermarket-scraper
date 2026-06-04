@@ -11,6 +11,7 @@
       "editor": "select",
       "enum": ["tutti", "conad", "lidl", "eurospin", "md", "aldi", "famila", "ins", "esselunga"],
       "enumTitles": ["All grocery chains", "Conad Superstore", "Lidl", "Eurospin", "MD Discount", "Aldi", "Famila / Iperfamila", "iN's Mercato", "Esselunga (preview fallback only when available)"],
+      "prefill": "lidl",
       "default": "tutti"
     },
     "keyword": {
@@ -18,18 +19,21 @@
       "type": "string",
       "description": "Return only products whose name or source category contains the term, for example: pasta, birra, latte, detersivo.",
       "editor": "textfield",
+      "prefill": "",
       "default": ""
     },
     "structuredOnly": {
       "title": "Return only structured API-quality records",
       "type": "boolean",
       "description": "Recommended. Excludes preview-only fallback records, such as currently available Esselunga preview items, from the output dataset.",
+      "prefill": true,
       "default": true
     },
     "maxItems": {
       "title": "Maximum products for a single selected chain",
       "type": "integer",
       "description": "Used only when you select a single supermarket chain.",
+      "prefill": 200,
       "default": 2000,
       "minimum": 1,
       "maximum": 10000
@@ -38,6 +42,7 @@
       "title": "Maximum products per chain when scraping all",
       "type": "integer",
       "description": "Used for All grocery chains. The default is above the currently validated Famila catalogue size, so large chains are not silently cut while each chain still has its own safety cap.",
+      "prefill": 2000,
       "default": 2000,
       "minimum": 1,
       "maximum": 10000
@@ -46,6 +51,7 @@
       "title": "Maximum total products when scraping all",
       "type": "integer",
       "description": "Safety ceiling for an all-chains run. Keep this greater than the expected sum of products across chains for full coverage.",
+      "prefill": 10000,
       "default": 10000,
       "minimum": 1,
       "maximum": 50000
@@ -54,12 +60,14 @@
       "title": "Save API diagnostics",
       "type": "boolean",
       "description": "Stores API response diagnostics for structured flyers. Use for development only.",
+      "prefill": false,
       "default": false
     },
     "investigateZeroResults": {
       "title": "Investigate chains without structured products",
       "type": "boolean",
       "description": "Development mode: for chains returning zero API products, saves page HTML, screenshot, DOM audit and click probes. Does not change extracted output.",
+      "prefill": false,
       "default": false
     },
     "proxyConfig": {
@@ -67,6 +75,7 @@
       "type": "object",
       "description": "Optional Apify Proxy configuration.",
       "editor": "proxy",
+      "prefill": { "useApifyProxy": true },
       "default": { "useApifyProxy": true }
     }
   }
