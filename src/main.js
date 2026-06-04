@@ -1,6 +1,7 @@
 /**
  * Italy Supermarket Deals Scraper
- * Extracts highlighted products from confrontavolantini.com active flyers.
+ * Extracts current promotional offers from active flyers published on confrontavolantini.com.
+ * Structured APIs are preferred; visible preview cards are used only as an explicit fallback.
  */
 import { Actor } from 'apify';
 import { PlaywrightCrawler } from 'crawlee';
@@ -26,6 +27,7 @@ const {
     diagnosticMode = false,
     proxyConfig: proxyConfigInput,
 } = input;
+const runStartedAt = new Date().toISOString();
 const proxyConfiguration = proxyConfigInput ? await Actor.createProxyConfiguration(proxyConfigInput) : undefined;
 const requested = String(catena).toLowerCase();
 const targets = requested === 'tutti' ? Object.entries(SOURCES) : Object.entries(SOURCES).filter(([key]) => key === requested);
@@ -34,100 +36,133 @@ console.log(`Catena="${catena}" | Categoria="${categoria || 'tutte'}" | Max=${ma
 
 let savedCount = 0;
 const savedKeys = new Set();
+const coverage = [];
 const crawler = new PlaywrightCrawler({
     proxyConfiguration,
     launchContext: { launchOptions: { headless: true } },
     maxConcurrency: 1,
     navigationTimeoutSecs: 45,
     requestHandlerTimeoutSecs: 240,
-    preNavigationHooks: [async (_ctx, options) => { options.waitUntil = 'domcontentloaded'; options.timeout = 45000; }],
+    preNavigationHooks: [async (_ctx, options) => { options.waitUntil = 'domcontentloaded'; options.timeout = 45_000; }],
     async requestHandler({ page, request, log }) {
-        const { chain, chainName } = request.userData;
+        const { chain, chainName, sourceUrl } = request.userData;
+        const report = {
+            chainSlug: chain, chainName, sourceUrl, activeFlyers: 0, flyerIds: [], structuredApiProducts: 0,
+            fallbackProducts: 0, savedProducts: 0, apiPagesWithProducts: 0, apiPagesEmpty: 0, status: 'processing',
+        };
+        if (savedCount >= maxItems) {
+            report.status = 'skipped_max_items_reached';
+            coverage.push(report);
+            log.info(`${chainName}: skipped because global maxItems=${maxItems} has already been reached.`);
+            return;
+        }
         await dismissCookies(page);
         await page.waitForTimeout(800);
-        const flyers = await collectFlyers(page);
-        log.info(`${chainName}: active flyers IDs=${flyers.map((f) => f.flyerId).join(', ') || 'none'}`);
+        const flyers = await collectFlyers(page, sourceUrl);
+        report.activeFlyers = flyers.length;
+        report.flyerIds = flyers.map((flyer) => flyer.flyerId);
+        log.info(`${chainName}: active flyers IDs=${report.flyerIds.join(', ') || 'none'}`);
         if (diagnosticMode) await putJson(`debug_${chain}_FLYERS`, flyers);
 
         let products = [];
+        const apiPageStats = [];
         for (const flyer of flyers) {
             if (products.length >= maxItems - savedCount) break;
-            const flyerProducts = await requestFlyerPages(page, chain, chainName, flyer, maxItems - savedCount - products.length, log, diagnosticMode);
-            products.push(...flyerProducts);
+            const apiResult = await requestFlyerPages(page, chain, chainName, flyer, maxItems - savedCount - products.length, log, diagnosticMode);
+            products.push(...apiResult.products);
+            apiPageStats.push(...apiResult.pages);
         }
         products = uniqueProducts(products);
-
+        report.structuredApiProducts = products.length;
+        report.apiPagesWithProducts = apiPageStats.filter((stat) => stat.productCount > 0).length;
+        report.apiPagesEmpty = apiPageStats.filter((stat) => stat.productCount === 0).length;
         if (!products.length) {
-            log.warning(`${chainName}: direct API returned no products; trying one UI click only for diagnostics/fallback.`);
-            products = await modalFallback(page, chainName, log);
+            products = await previewFallback(page, chain, chainName, sourceUrl, runStartedAt, log);
+            report.fallbackProducts = products.length;
         }
-        if (!products.length) products = await previewFallback(page, chainName, log);
-
-        const term = String(categoria || '').toLowerCase();
-        if (term) products = products.filter((p) => `${p.name} ${p.categoria || ''}`.toLowerCase().includes(term));
+        const term = String(categoria || '').trim().toLowerCase();
+        if (term) products = products.filter((product) => `${product.name} ${product.categoria || ''}`.toLowerCase().includes(term));
         log.info(`${chainName}: candidates=${products.length}`);
         for (const product of products) {
             if (savedCount >= maxItems) break;
-            const key = productKey(product);
+            const key = recordKey(product);
             if (savedKeys.has(key)) continue;
             savedKeys.add(key);
             await Actor.pushData(product);
             savedCount += 1;
+            report.savedProducts += 1;
         }
-        log.info(`${chainName}: saved total=${savedCount}`);
+        if (report.structuredApiProducts > 0) report.status = 'structured_api';
+        else if (report.fallbackProducts > 0) report.status = 'preview_fallback';
+        else if (report.activeFlyers > 0) report.status = 'active_flyers_without_structured_offers';
+        else report.status = 'no_active_flyers_detected';
+        coverage.push(report);
+        log.info(`${chainName}: saved=${report.savedProducts}, status=${report.status}, total run=${savedCount}`);
     },
 });
 
-await crawler.run(targets.map(([chain, source]) => ({ url: source.url, uniqueKey: chain, userData: { chain, chainName: source.name } })));
+await crawler.run(targets.map(([chain, source]) => ({
+    url: source.url,
+    uniqueKey: chain,
+    userData: { chain, chainName: source.name, sourceUrl: source.url },
+})));
+const summary = {
+    actor: 'Italy Supermarket Deals Scraper', scrapedAt: runStartedAt, requestedChain: catena, categoryFilter: categoria || '',
+    maxItems, totalProductsSaved: savedCount, maxItemsReached: savedCount >= maxItems, coverage,
+    structuredApiChains: coverage.filter((row) => row.status === 'structured_api').map((row) => row.chainSlug),
+    fallbackChains: coverage.filter((row) => row.status === 'preview_fallback').map((row) => row.chainSlug),
+    noProductsChains: coverage.filter((row) => !['structured_api', 'preview_fallback'].includes(row.status)).map((row) => row.chainSlug),
+};
+await putJson('RUN_SUMMARY', summary);
+console.log(`RUN SUMMARY: ${JSON.stringify(summary)}`);
 console.log(`Done. Total saved: ${savedCount} offers.`);
 await Actor.exit();
 
-async function collectFlyers(page) {
-    return page.locator('button.chain-mini-thumb-btn').evaluateAll((buttons) => buttons.map((button, index) => {
-        const src = button.querySelector('img')?.getAttribute('src') || '';
-        const match = src.match(/flyer0*(\d+)_p\d+/i);
-        return { index, flyerId: match ? Number(match[1]) : null, coverImage: src };
+async function collectFlyers(page, sourceUrl) {
+    const flyers = await page.locator('button.chain-mini-thumb-btn').evaluateAll((buttons) => buttons.map((button, index) => {
+        const imgSrc = button.querySelector('img')?.getAttribute('src') || '';
+        const idMatch = imgSrc.match(/flyer0*(\d+)_p\d+/i);
+        const card = button.closest('.chain-mini-card') || button.parentElement;
+        const dateMatch = (card?.innerText || '').match(/(\d{2}\/\d{2}\/\d{4})\s*[–-]\s*(\d{2}\/\d{2}\/\d{4})/);
+        return { index, flyerId: idMatch ? Number(idMatch[1]) : null, coverImage: imgSrc, validFromRaw: dateMatch?.[1] || '', validToRaw: dateMatch?.[2] || '' };
     }).filter((flyer) => flyer.flyerId));
+    return flyers.map((flyer) => ({ ...flyer, validFrom: toIsoDate(flyer.validFromRaw), validTo: toIsoDate(flyer.validToRaw), coverImage: absoluteUrl(flyer.coverImage, sourceUrl), sourcePageUrl: sourceUrl }));
 }
 
 async function requestFlyerPages(page, chain, chainName, flyer, limit, log, diagnostics) {
-    const results = [];
-    const origin = new URL(page.url()).origin;
-    for (let pageNumber = 1; pageNumber <= 80 && results.length < limit; pageNumber++) {
+    const products = [];
+    const pages = [];
+    const origin = new URL(flyer.sourcePageUrl).origin;
+    for (let pageNumber = 1; pageNumber <= 80 && products.length < limit; pageNumber++) {
         const endpoint = `${origin}/api/offers?flyer_id=${encodeURIComponent(flyer.flyerId)}&page_number=${encodeURIComponent(pageNumber)}`;
         let response = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-                const res = await page.request.get(endpoint, {
-                    headers: { Accept: 'application/json' },
-                    timeout: 15000,
-                });
+                const res = await page.request.get(endpoint, { headers: { Accept: 'application/json' }, timeout: 15_000 });
                 const text = await res.text();
                 let body = null;
-                try { body = JSON.parse(text); } catch { /* stored in diagnostics */ }
+                try { body = JSON.parse(text); } catch { /* diagnostic preview retained */ }
                 response = { endpoint, status: res.status(), body, textPreview: text.slice(0, 400), attempt };
                 if (response.status === 200 && response.body) break;
-            } catch (error) {
-                response = { endpoint, error: String(error), attempt };
-            }
+            } catch (error) { response = { endpoint, error: String(error), attempt }; }
             log.warning(`${chainName}: retry flyer=${flyer.flyerId} page=${pageNumber} attempt=${attempt}`);
             await page.waitForTimeout(attempt * 400);
         }
-
         if (diagnostics) await putJson(`debug_${chain}_API_${flyer.flyerId}_PAGE_${pageNumber}`, response);
         if (!response || response.error || response.status !== 200 || !response.body) {
             log.warning(`${chainName}: flyer=${flyer.flyerId} page=${pageNumber} API failed after retries ${JSON.stringify(response).slice(0, 180)}`);
             break;
         }
-        const parsed = parseApiPayload(response.body, chainName, flyer.flyerId, pageNumber);
+        const parsed = parseApiPayload(response.body, chain, chainName, flyer, pageNumber, endpoint, runStartedAt);
+        pages.push({ flyerId: flyer.flyerId, pageNumber, productCount: parsed.length, endpoint });
         log.info(`${chainName}: API flyer=${flyer.flyerId} page=${pageNumber} offers=${parsed.length}`);
         if (!parsed.length) break;
-        results.push(...parsed);
+        products.push(...parsed);
     }
-    return uniqueProducts(results).slice(0, limit);
+    return { products: uniqueProducts(products).slice(0, limit), pages };
 }
 
-function parseApiPayload(body, chainName, flyerId, pageNumber) {
+function parseApiPayload(body, chain, chainName, flyer, pageNumber, endpoint, scrapedAt) {
     const objects = [];
     const walk = (value, depth = 0) => {
         if (!value || depth > 7) return;
@@ -137,50 +172,51 @@ function parseApiPayload(body, chainName, flyerId, pageNumber) {
         Object.values(value).forEach((item) => walk(item, depth + 1));
     };
     walk(body);
-    return objects.map((p) => {
-        const name = p.product_name || p.productName || p.name || p.title || p.nome || p.description;
-        const price = p.price_value ?? p.priceValue ?? p.price ?? p.offer_price ?? p.offerPrice ?? p.prezzo;
+    return objects.map((product) => {
+        const name = product.product_name || product.productName || product.name || product.title || product.nome || product.description;
+        const price = product.price_value ?? product.priceValue ?? product.price ?? product.offer_price ?? product.offerPrice ?? product.prezzo;
         if (!name || price === undefined || price === null) return null;
-        return {
-            name: String(name).trim(), catena: p.store_name || chainName, categoria: p.category || '',
-            priceOffer: normalizePrice(price), priceOriginal: normalizePrice(p.original_price ?? p.originalPrice ?? ''),
-            discount: String(p.discount ?? ''), validFrom: p.valid_from || '', validTo: p.valid_to || '',
-            format: p.quantity || p.format || '', flyerId: p.flyer_id || flyerId, pageNumber: p.page_number || pageNumber,
-            offerId: p.offer_id || p.id || '', img: p.page_image_url || p.image_url || '', url: '', extractionSource: 'offers_api',
+        const record = {
+            name: String(name).trim(), catena: product.store_name || chainName, chainSlug: chain, categoria: product.category || product.categoria || '',
+            priceOffer: normalizePrice(price), priceOriginal: normalizePrice(product.original_price ?? product.originalPrice ?? ''), discount: String(product.discount ?? product.sconto ?? ''),
+            validFrom: product.valid_from || product.validFrom || flyer.validFrom || '', validTo: product.valid_to || product.validTo || flyer.validTo || '',
+            format: product.quantity || product.format || '', flyerId: product.flyer_id || flyer.flyerId, pageNumber: product.page_number || pageNumber,
+            offerId: product.offer_id || product.id || '', img: absoluteUrl(product.page_image_url || product.image_url || product.image || flyer.coverImage, flyer.sourcePageUrl),
+            sourcePageUrl: flyer.sourcePageUrl, offersApiUrl: endpoint, extractionSource: 'offers_api', dataQuality: 'structured_api', scrapedAt,
         };
+        record.validity = buildValidity(record.validFrom, record.validTo);
+        record.offerKey = record.offerId ? `${record.chainSlug}:${record.offerId}` : recordKey(record);
+        record.productFingerprint = productFingerprint(record);
+        return record;
     }).filter(Boolean);
 }
 
-async function modalFallback(page, chainName, log) {
-    const cover = page.locator('button.chain-mini-thumb-btn').first();
-    if (!(await cover.isVisible().catch(() => false))) return [];
-    await cover.click({ force: true }).catch(() => {});
-    const close = page.locator('button[aria-label="Chiudi visualizzatore"]').last();
-    await close.waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
-    if (!(await close.isVisible().catch(() => false))) return [];
-    const items = await page.evaluate((store) => [...document.querySelectorAll('[aria-label^="Aggiungi "]')].map((node) => {
-        const label = node.getAttribute('aria-label') || '';
-        const match = label.match(/^Aggiungi\s+(.+?)\s+alla Nota Spesa,\s*([0-9]+(?:[.,][0-9]{1,2})?)\s*€$/i);
-        return match ? { name: match[1], catena: store, priceOffer: match[2].replace(',', '.'), extractionSource: 'viewer_hotspot' } : null;
-    }).filter(Boolean), chainName).catch(() => []);
-    log.info(`${chainName}: modal fallback offers=${items.length}`);
-    return items;
-}
-
-async function previewFallback(page, chainName, log) {
+async function previewFallback(page, chain, chainName, sourceUrl, scrapedAt, log) {
     const lines = await page.evaluate(() => document.body.innerText.split(/[\n\r]+/).map((line) => line.trim()).filter(Boolean)).catch(() => []);
-    const items = [];
+    const products = [];
     for (let i = 2; i < lines.length; i++) {
         if (!/^\d{1,4}[,.]\d{2}\s*€$/.test(lines[i])) continue;
         const name = lines[i - 2].replace(/^[^\w\u00C0-\u024F]+/, '').trim();
-        if (name.length > 2) items.push({ name, catena: chainName, priceOffer: normalizePrice(lines[i]), format: lines[i - 1], extractionSource: 'preview_text' });
+        if (name.length <= 2) continue;
+        const record = {
+            name, catena: chainName, chainSlug: chain, categoria: '', priceOffer: normalizePrice(lines[i]), priceOriginal: '', discount: '', validFrom: '', validTo: '', validity: '',
+            format: lines[i - 1], flyerId: '', pageNumber: '', offerId: '', img: '', sourcePageUrl: sourceUrl, offersApiUrl: '', extractionSource: 'preview_text', dataQuality: 'preview_fallback', scrapedAt,
+        };
+        record.offerKey = recordKey(record);
+        record.productFingerprint = productFingerprint(record);
+        products.push(record);
     }
-    log.info(`${chainName}: preview fallback offers=${items.length}`);
-    return uniqueProducts(items);
+    log.info(`${chainName}: preview fallback offers=${products.length}`);
+    return uniqueProducts(products);
 }
 
+function toIsoDate(value) { const match = String(value || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return match ? `${match[3]}-${match[2]}-${match[1]}` : ''; }
+function buildValidity(from, to) { return from && to ? `${from} – ${to}` : ''; }
+function absoluteUrl(value, baseUrl) { if (!value) return ''; try { return new URL(value, baseUrl).href; } catch { return String(value); } }
 function normalizePrice(value) { return String(value ?? '').replace(/€/g, '').trim().replace(',', '.'); }
-function productKey(p) { return `${String(p.catena).toLowerCase()}|${String(p.flyerId || 'x')}|${String(p.name).toLowerCase()}|${normalizePrice(p.priceOffer)}`; }
-function uniqueProducts(items) { const map = new Map(); for (const item of items) if (item?.name && item?.priceOffer && !map.has(productKey(item))) map.set(productKey(item), item); return [...map.values()]; }
+function normalizeText(value) { return String(value ?? '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+function recordKey(product) { return `${normalizeText(product.chainSlug || product.catena)}|${String(product.flyerId || 'x')}|${normalizeText(product.name)}|${normalizePrice(product.priceOffer)}`; }
+function productFingerprint(product) { return `${normalizeText(product.chainSlug || product.catena)}|${normalizeText(product.name)}|${normalizeText(product.format)}`; }
+function uniqueProducts(items) { const map = new Map(); for (const item of items) if (item?.name && item?.priceOffer && !map.has(recordKey(item))) map.set(recordKey(item), item); return [...map.values()]; }
 async function putJson(key, value) { await Actor.setValue(key, JSON.stringify(value, null, 2), { contentType: 'application/json' }); }
-async function dismissCookies(page) { for (const label of ['Continua senza accettare', 'Rifiuta', 'Accetta tutti', 'Accetta', 'OK']) { try { const b = page.locator(`button:has-text("${label}")`).first(); if (await b.isVisible({ timeout: 500 })) { await b.click(); return; } } catch { /* ignore */ } } }
+async function dismissCookies(page) { for (const label of ['Continua senza accettare', 'Rifiuta', 'Accetta tutti', 'Accetta', 'OK']) { try { const button = page.locator(`button:has-text("${label}")`).first(); if (await button.isVisible({ timeout: 500 })) { await button.click(); return; } } catch { /* ignore */ } } }
