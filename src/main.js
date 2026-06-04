@@ -61,7 +61,9 @@ if (query) {
         );
         if (cats.length === 0) cats = [{ slug: categoria, catName: categoria, storeId: '300000001003363' }];
     }
-    startUrls = cats.map(c => ({
+    // Cap categories to scrape based on maxItems (avg ~30 products/cat)
+    const catsNeeded = Math.max(1, Math.ceil(maxItems / 30));
+    startUrls = cats.slice(0, catsNeeded).map(c => ({
         url: `${NAV}/store/menu/${c.storeId}/${c.slug}`,
         userData: { tipo: 'categoria', slug: c.slug, catName: c.catName, page: 1 },
     }));
@@ -73,7 +75,7 @@ const crawler = new PlaywrightCrawler({
     proxyConfiguration,
     launchContext: { launchOptions: { headless: true } },
     requestHandlerTimeoutSecs: 120,
-    maxConcurrency: 2,
+    maxConcurrency: 5,
 
     async requestHandler({ page, request, log, addRequests }) {
         const { tipo, slug, catName, page: pageNum = 1 } = request.userData;
@@ -86,17 +88,17 @@ const crawler = new PlaywrightCrawler({
         try {
             await page.waitForFunction(
                 () => document.querySelectorAll('.product-card-skeleton').length === 0,
-                { timeout: 20_000 }
+                { timeout: 10_000 }
             );
         } catch { log.warning('Skeletons still present after 20s'); }
 
         // Wait for real product links
         try {
-            await page.waitForSelector('a[href*="/store/prodotto/"]', { timeout: 15_000 });
+            await page.waitForSelector('a[href*="/store/prodotto/"]', { timeout: 8_000 });
             log.info('Products loaded');
         } catch { log.warning('No product links found'); }
 
-        await page.waitForTimeout(500);
+        
 
         const { items, hasNext } = await page.evaluate(() => {
             const g = (el, ...sels) => {
