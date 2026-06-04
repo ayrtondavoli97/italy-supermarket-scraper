@@ -1,64 +1,68 @@
 /**
- * Italy Supermarket Scraper — Carrefour Italia
- * spesa.carrefour.it — catalog accessible without store selection
- * Uses internal API: /api/2.0/page/category?id=...
+ * Italy Supermarket Deals Scraper
+ * Source: VolantinoFacile.it — aggregates offers from all major Italian supermarkets
+ * URL: https://www.volantinofacile.it/{chain}/volantino-{chain}
+ * Input: catena (optional), categoria (optional), maxItems
+ * Output: product, priceOffer, priceOriginal, discount%, chain, validFrom, validTo
  */
 
 import { Actor } from 'apify';
 import { PlaywrightCrawler } from 'crawlee';
 
-const BASE = 'https://spesa.carrefour.it';
+// All supported chains on VolantinoFacile
+const CHAINS = {
+    'tutti':        null,
+    'esselunga':    'esselunga',
+    'conad':        'conad',
+    'coop':         'coop',
+    'lidl':         'lidl',
+    'eurospin':     'eurospin',
+    'carrefour':    'carrefour',
+    'penny':        'penny-market',
+    'md':           'md-discount',
+    'aldi':         'aldi',
+    'bennet':       'bennet',
+    'iper':         'iper',
+    'pam':          'pam',
+    'despar':       'despar',
+    'famila':       'famila',
+    'interspar':    'interspar',
+};
 
-// Carrefour category IDs (from site navigation)
-const CATEGORIES = [
-    { id: 'frutta-e-verdura',        name: 'Frutta e Verdura' },
-    { id: 'carne-e-pesce',           name: 'Carne e Pesce' },
-    { id: 'salumi-e-formaggi',       name: 'Salumi e Formaggi' },
-    { id: 'pane-e-pasticceria',      name: 'Pane e Pasticceria' },
-    { id: 'pasta-riso-cereali',      name: 'Pasta, Riso e Cereali' },
-    { id: 'sughi-conserve',          name: 'Sughi e Conserve' },
-    { id: 'olio-condimenti',         name: 'Olio e Condimenti' },
-    { id: 'dolci-snack',             name: 'Dolci e Snack' },
-    { id: 'colazione',               name: 'Colazione' },
-    { id: 'bevande',                 name: 'Bevande' },
-    { id: 'vini-birre-alcolici',     name: 'Vini, Birre e Alcolici' },
-    { id: 'surgelati',               name: 'Surgelati' },
-    { id: 'latticini-uova',          name: 'Latticini e Uova' },
-    { id: 'pulizia-casa',            name: 'Pulizia Casa' },
-    { id: 'igiene-persona',          name: 'Igiene Persona' },
-    { id: 'neonati-bambini',         name: 'Neonati e Bambini' },
-    { id: 'animali',                 name: 'Animali' },
-    { id: 'bio-vegano',              name: 'Bio e Vegano' },
-];
+const BASE = 'https://www.volantinofacile.it';
 
 await Actor.init();
 
 const input = await Actor.getInput() ?? {};
-const { categoria = '', query = '', maxItems = 2000, proxyConfig: proxyConfigInput } = input;
+const {
+    catena = 'tutti',
+    categoria = '',
+    maxItems = 500,
+    proxyConfig: proxyConfigInput,
+} = input;
 
 const proxyConfiguration = proxyConfigInput
     ? await Actor.createProxyConfiguration(proxyConfigInput)
     : undefined;
 
-console.log(`Categoria="${categoria || 'tutte'}" | Query="${query}" | Max=${maxItems}`);
+console.log(`Catena="${catena}" | Categoria="${categoria || 'tutte'}" | Max=${maxItems}`);
 
-let cats = CATEGORIES;
-if (categoria) {
-    cats = CATEGORIES.filter(c =>
-        c.id.includes(categoria.toLowerCase()) ||
-        c.name.toLowerCase().includes(categoria.toLowerCase())
-    );
-    if (cats.length === 0) cats = [{ id: categoria, name: categoria }];
+// Build start URLs
+let startUrls = [];
+const chainSlug = CHAINS[catena.toLowerCase()] ?? catena.toLowerCase();
+
+if (catena === 'tutti' || !chainSlug) {
+    // Scrape the main offers aggregation page
+    startUrls = [
+        { url: `${BASE}/volantini-iper-supermercati`, userData: { chain: 'tutti', page: 1 } },
+        { url: `${BASE}/volantini-discount`,          userData: { chain: 'discount', page: 1 } },
+    ];
+} else {
+    startUrls = [{
+        url: `${BASE}/${chainSlug}/volantino-${chainSlug}`,
+        userData: { chain: chainSlug, page: 1 },
+    }];
 }
-const catsNeeded = query ? 1 : Math.max(1, Math.ceil(maxItems / 40));
-const catsToScrape = cats.slice(0, catsNeeded);
-
-const startUrls = query
-    ? [{ url: `${BASE}/search?q=${encodeURIComponent(query)}&page=1`, userData: { slug: 'search', catName: 'Ricerca', page: 1 } }]
-    : catsToScrape.map(c => ({
-        url: `${BASE}/${c.id}`,
-        userData: { slug: c.id, catName: c.name, page: 1 },
-    }));
 
 let collected = 0;
 
@@ -69,61 +73,70 @@ const crawler = new PlaywrightCrawler({
     maxConcurrency: 2,
 
     async requestHandler({ page, request, log, addRequests }) {
-        const { slug, catName, page: pageNum = 1 } = request.userData;
-        log.info(`${catName} page=${pageNum} | ${request.url}`);
+        const { chain, page: pageNum = 1 } = request.userData;
+        log.info(`Chain=${chain} page=${pageNum} | ${request.url}`);
 
         // Intercept API responses
-        const apiProducts = [];
+        const apiOffers = [];
         page.on('response', async response => {
             const url = response.url();
             const ct = response.headers()['content-type'] || '';
             if (!ct.includes('json')) return;
-            if (!url.includes('/api/') && !url.includes('product') && !url.includes('catalog') && !url.includes('search')) return;
+            if (!url.includes('/api/') && !url.includes('offer') && !url.includes('product') && !url.includes('flyer')) return;
             try {
                 const json = await response.json();
-                const products = findProductsInJson(json);
-                if (products.length > 0) {
-                    apiProducts.push(...products);
-                    log.info(`API hit: ${url.substring(0, 100)} → ${products.length} products`);
+                const offers = extractOffers(json, url);
+                if (offers.length > 0) {
+                    apiOffers.push(...offers);
+                    log.info(`API: ${url.substring(0, 100)} → ${offers.length} offers`);
                 }
             } catch { /* ignore */ }
         });
 
         await page.goto(request.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
         await dismissCookies(page, log);
-
-        // Wait for content
         await page.waitForTimeout(3000);
 
-        // Save debug on first run
+        // Save debug HTML on first run
         if (pageNum === 1 && collected === 0) {
             const html = await page.content();
-            await Actor.setValue(`debug_${slug}`, html, { contentType: 'text/html' });
-            const txt = await page.evaluate(() => document.body.innerText.substring(0, 500));
+            await Actor.setValue(`debug_${chain}_p1`, html, { contentType: 'text/html' });
+            const txt = await page.evaluate(() => document.body.innerText.substring(0, 800));
             log.info(`Page preview:\n${txt}`);
         }
 
-        log.info(`API products intercepted: ${apiProducts.length}`);
+        log.info(`API offers intercepted: ${apiOffers.length}`);
 
-        // Use API products if found, else DOM
-        let items = apiProducts.length > 0 ? apiProducts : await parseDOM(page, log);
+        // Use API offers if found, else DOM
+        let items = apiOffers.length > 0
+            ? apiOffers
+            : await parseOffersDOM(page, log, chain);
 
-        log.info(`${catName} p${pageNum}: ${items.length} products`);
+        // Filter by categoria if specified
+        if (categoria && items.length > 0) {
+            items = items.filter(i =>
+                i.categoria?.toLowerCase().includes(categoria.toLowerCase()) ||
+                i.name?.toLowerCase().includes(categoria.toLowerCase())
+            );
+        }
+
+        log.info(`${chain} p${pageNum}: ${items.length} offers`);
 
         for (const item of items) {
             if (collected >= maxItems) break;
-            await Actor.pushData({ ...item, supermarket: 'Carrefour', categoria: catName });
+            await Actor.pushData(item);
             collected++;
         }
 
-        // Next page
-        const hasNext = await page.evaluate(() =>
-            !!document.querySelector('a[rel="next"], [class*="next"]:not([disabled]), button[aria-label*="next"]')
-        );
-        if (hasNext && collected < maxItems) {
-            const nextUrl = new URL(request.url);
-            nextUrl.searchParams.set('page', pageNum + 1);
-            await addRequests([{ url: nextUrl.toString(), userData: { ...request.userData, page: pageNum + 1 } }]);
+        // Pagination
+        if (collected < maxItems) {
+            const nextUrl = await page.evaluate(() => {
+                const next = document.querySelector('a[rel="next"], [class*="next"]:not([disabled])');
+                return next?.href || null;
+            });
+            if (nextUrl) {
+                await addRequests([{ url: nextUrl, userData: { chain, page: pageNum + 1 } }]);
+            }
         }
     },
 
@@ -131,14 +144,16 @@ const crawler = new PlaywrightCrawler({
 });
 
 await crawler.run(startUrls);
-console.log(`Done. Total saved: ${collected} products.`);
+console.log(`Done. Total saved: ${collected} offers.`);
 await Actor.exit();
 
-function findProductsInJson(json) {
+// ── Extract offers from API JSON ─────────────────────────────────────────────
+function extractOffers(json, apiUrl) {
     const candidates = [
-        json.products, json.items, json.data?.products, json.data?.items,
-        json.result?.products, json.results, json.catalog?.products,
-        json.page?.products, Array.isArray(json) ? json : null,
+        json.offers, json.products, json.items, json.deals,
+        json.data?.offers, json.data?.products, json.data?.items,
+        json.result?.offers, json.results,
+        Array.isArray(json) ? json : null,
     ].filter(Array.isArray);
 
     for (const arr of candidates) {
@@ -146,53 +161,123 @@ function findProductsInJson(json) {
         const first = arr[0];
         if (first.name || first.title || first.description || first.price !== undefined) {
             return arr.map(p => ({
-                name: p.name || p.title || p.description || '',
-                price: String(p.price ?? p.sellingPrice ?? p.currentPrice ?? ''),
-                oldPrice: String(p.originalPrice ?? p.crossedPrice ?? p.listPrice ?? ''),
-                pricePerUnit: p.pricePerUnit || p.unitPrice || '',
-                brand: p.brand || p.brandName || '',
-                weight: p.netContent || p.weight || p.format || '',
-                promo: p.promoLabel || p.badge || p.promotion?.label || '',
-                img: p.image || p.imageUrl || p.thumbnail || '',
-                url: p.url || p.link || '',
-                sku: String(p.id || p.sku || p.ean || ''),
+                name: p.name || p.title || p.description || p.denominazione || '',
+                catena: p.store || p.chain || p.retailer || p.brand || '',
+                categoria: p.category || p.categoria || '',
+                priceOffer: String(p.price ?? p.salePrice ?? p.offerPrice ?? p.prezzoOfferta ?? ''),
+                priceOriginal: String(p.originalPrice ?? p.regularPrice ?? p.prezzoOriginale ?? ''),
+                discount: String(p.discount ?? p.sconto ?? p.percentOff ?? ''),
+                validFrom: p.validFrom || p.startDate || p.dal || '',
+                validTo: p.validTo || p.endDate || p.al || '',
+                img: p.image || p.imageUrl || p.img || '',
+                url: p.url || p.link || apiUrl,
             })).filter(p => p.name);
         }
     }
     return [];
 }
 
-async function parseDOM(page, log) {
-    return page.evaluate(() => {
-        const productLinks = [...document.querySelectorAll('a[href*="/product"], a[href*="/prodotto"], a[href*="/p/"]')];
-        const seen = new Set();
-        const unique = productLinks.filter(a => { if (seen.has(a.href)) return false; seen.add(a.href); return true; });
-
-        return unique.map(link => {
-            let card = link;
-            while (card && card !== document.body) {
-                const cls = card.className || '';
-                if (cls.includes('product') || cls.includes('item') || card.tagName === 'LI' || card.tagName === 'ARTICLE') break;
-                card = card.parentElement;
+// ── DOM parsing fallback ──────────────────────────────────────────────────────
+async function parseOffersDOM(page, log, chain) {
+    return page.evaluate((chain) => {
+        const g = (el, ...sels) => {
+            for (const s of sels) {
+                try { const f = el.querySelector(s); if (f) return f.textContent.trim(); } catch {}
             }
-            const txt = card?.textContent.trim() || '';
-            const priceMatch = txt.match(/(\d{1,3}[,\.]\d{2})\s*€/);
+            return '';
+        };
+
+        // Find offer cards — VolantinoFacile uses various card layouts
+        let cards = [
+            ...document.querySelectorAll(
+                '[class*="offer-card"], [class*="OfferCard"], [class*="product-card"], ' +
+                '[class*="deal-card"], [class*="flyer-product"], [class*="promo-item"], ' +
+                'article[class*="offer"], article[class*="product"]'
+            )
+        ];
+
+        // Fallback: any element with a price discount pattern
+        if (cards.length === 0) {
+            cards = [...document.querySelectorAll('li, article, div[class*="item"]')].filter(el => {
+                const txt = el.textContent.trim();
+                return txt.includes('€') && txt.length > 15 && txt.length < 2000 &&
+                    !el.closest('nav') && !el.closest('header') && !el.closest('footer');
+            }).slice(0, 300);
+        }
+
+        return cards.map(card => {
+            const txt = card.textContent.trim();
+
+            const name = g(card,
+                '[class*="name"]', '[class*="title"]', '[class*="product-name"]',
+                '[class*="offer-name"]', 'h2', 'h3', 'h4', 'strong'
+            );
+            if (!name || name.length < 2 || name.length > 300) return null;
+
+            // Offer price
+            const offerPriceEl = card.querySelector(
+                '[class*="offer-price"], [class*="sale-price"], [class*="promo-price"], ' +
+                '[class*="new-price"], [class*="current-price"]'
+            );
+            const offerMatch = (offerPriceEl?.textContent || txt).match(/(\d{1,3}[,\.]\d{2})\s*€/);
+            const priceOffer = offerMatch ? offerMatch[1].replace(',', '.') : '';
+
+            // Original price (crossed out)
+            const origEl = card.querySelector('s, del, [class*="old"], [class*="original"], [class*="regular"], [class*="barred"]');
+            const origMatch = origEl?.textContent.match(/(\d{1,3}[,\.]\d{2})/);
+            const priceOriginal = origMatch ? origMatch[1].replace(',', '.') : '';
+
+            // Discount %
+            const discountEl = card.querySelector('[class*="discount"], [class*="percent"], [class*="save"], [class*="sconto"]');
+            const discount = discountEl?.textContent.trim() || '';
+
+            // Validity dates
+            const validEl = card.querySelector('[class*="valid"], [class*="date"], [class*="expir"], time');
+            const validity = validEl?.textContent.trim() || '';
+
+            // Chain name
+            const chainEl = card.querySelector('[class*="store"], [class*="chain"], [class*="brand"], [class*="logo"] img');
+            const catenaName = chainEl?.textContent.trim() || chainEl?.getAttribute('alt') || chain;
+
+            const img = card.querySelector('img')?.src || '';
+            const link = card.querySelector('a');
+            const url = link?.href || '';
+
             return {
-                name: link.textContent.trim() || card?.querySelector('h2,h3,h4,[class*="name"],[class*="title"]')?.textContent.trim() || '',
-                price: priceMatch?.[1]?.replace(',', '.') || '',
-                oldPrice: '', pricePerUnit: '', brand: '', weight: '', promo: '',
-                img: card?.querySelector('img')?.src || '',
-                url: link.href,
+                name,
+                catena: catenaName,
+                categoria: g(card, '[class*="category"], [class*="categoria"]'),
+                priceOffer,
+                priceOriginal,
+                discount,
+                validity,
+                img,
+                url,
             };
-        }).filter(i => i.name && i.name.length > 2);
-    });
+        }).filter(Boolean);
+    }, chain);
 }
 
 async function dismissCookies(page, log) {
-    for (const text of ['Accetta tutti', 'Accetta', 'Accept all', 'Continua senza accettare']) {
+    // Sourcepoint iframe (common on VolantinoFacile)
+    try {
+        const frames = page.frames();
+        for (const frame of frames) {
+            if (frame.url().includes('sourcepoint') || frame.url().includes('privacy') || frame.url().includes('sp-')) {
+                const btn = frame.locator('button:has-text("Continua senza accettare"), button:has-text("Rifiuta"), button:has-text("Reject")').first();
+                if (await btn.isVisible({ timeout: 2000 })) {
+                    await btn.click();
+                    log.info('Cookie dismissed via iframe');
+                    return;
+                }
+            }
+        }
+    } catch { /* ignore */ }
+    // Direct buttons
+    for (const text of ['Accetta tutti', 'Accetta', 'Continua senza accettare', 'OK']) {
         try {
             const btn = page.locator(`button:has-text("${text}")`).first();
-            if (await btn.isVisible({ timeout: 2000 })) {
+            if (await btn.isVisible({ timeout: 1500 })) {
                 await btn.click();
                 await page.waitForTimeout(500);
                 log.info(`Cookie dismissed: "${text}"`);
@@ -200,12 +285,4 @@ async function dismissCookies(page, log) {
             }
         } catch { /* ignore */ }
     }
-    // Sourcepoint iframe
-    try {
-        const frame = page.frames().find(f => f.url().includes('sourcepoint') || f.url().includes('privacy'));
-        if (frame) {
-            const btn = frame.locator('button:has-text("Continua"), button:has-text("Reject"), button:has-text("Accetta")').first();
-            if (await btn.isVisible({ timeout: 2000 })) { await btn.click(); log.info('Cookie dismissed via iframe'); }
-        }
-    } catch { /* ignore */ }
 }
