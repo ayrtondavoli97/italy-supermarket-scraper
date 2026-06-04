@@ -145,14 +145,16 @@ const crawler = new PlaywrightCrawler({
 
         // If on index page, also queue the full flyer Sfoglia pages
         if (isFlyerIndex && pageNum === 1 && collected < maxItems) {
-            // Debug: list all links on page
-            const allLinks = await page.evaluate(() =>
-                [...document.querySelectorAll('a[href]')]
-                    .map(a => ({ text: a.textContent.trim().substring(0, 30), href: a.href.substring(0, 80) }))
-                    .filter(a => a.text.length > 0)
-                    .slice(0, 20)
-            );
-            log.info(`All links on page: ${JSON.stringify(allLinks)}`);
+            // Wait for Sfoglia links to be injected by JS (they're not in initial DOM)
+            try {
+                await page.waitForFunction(
+                    () => [...document.querySelectorAll('a')].some(a => a.textContent.trim().toLowerCase() === 'sfoglia'),
+                    { timeout: 8_000 }
+                );
+                log.info('Sfoglia links appeared in DOM');
+            } catch {
+                log.warning('Sfoglia links not found after 8s wait');
+            }
 
             const flyerLinks = await page.evaluate(() => {
                 const results = [];
