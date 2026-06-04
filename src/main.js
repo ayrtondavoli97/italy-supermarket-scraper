@@ -143,6 +143,30 @@ const crawler = new PlaywrightCrawler({
             ? apiOffers
             : await parseOffersText(page, chainName, log);
 
+        // If on index page, also queue the full flyer Sfoglia pages
+        if (isFlyerIndex && pageNum === 1 && collected < maxItems) {
+            const flyerLinks = await page.evaluate(() => {
+                const results = [];
+                const seen = new Set();
+                for (const a of document.querySelectorAll('a[href]')) {
+                    if (a.textContent.trim().toLowerCase() !== 'sfoglia') continue;
+                    let p = a.parentElement;
+                    for (let i = 0; i < 6; i++) {
+                        if (p?.textContent.includes('Attivo')) {
+                            if (!seen.has(a.href)) { results.push(a.href); seen.add(a.href); }
+                            break;
+                        }
+                        p = p?.parentElement;
+                    }
+                }
+                return results.slice(0, 3);
+            });
+            log.info(`Sfoglia links found: ${flyerLinks.length} → ${flyerLinks.slice(0,2).join(', ')}`);
+            for (const flyerUrl of flyerLinks) {
+                await addRequests([{ url: flyerUrl, userData: { chain, chainName, page: 1, isFlyerIndex: false } }]);
+            }
+        }
+
         if (categoria) {
             items = items.filter(i =>
                 i.categoria?.toLowerCase().includes(categoria.toLowerCase()) ||
