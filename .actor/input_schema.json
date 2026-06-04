@@ -9,8 +9,8 @@
       "type": "string",
       "description": "Select one chain, or all currently monitored chains.",
       "editor": "select",
-      "enum": ["tutti", "lidl", "eurospin", "md", "aldi", "esselunga", "conad", "penny", "coop", "carrefour"],
-      "enumTitles": ["All monitored chains", "Lidl", "Eurospin", "MD Discount", "Aldi", "Esselunga (fallback availability may vary)", "Conad (coverage under development)", "Penny Market (coverage under development)", "Coop (coverage under development)", "Carrefour (coverage under development)"],
+      "enum": ["tutti", "lidl", "eurospin", "md", "aldi", "conad", "esselunga", "penny", "coop", "carrefour"],
+      "enumTitles": ["All monitored chains", "Lidl", "Eurospin", "MD Discount", "Aldi", "Conad Superstore", "Esselunga (fallback availability may vary)", "Penny Market (coverage under development)", "Coop (coverage under development)", "Carrefour (coverage under development)"],
       "default": "tutti"
     },
     "categoria": {
